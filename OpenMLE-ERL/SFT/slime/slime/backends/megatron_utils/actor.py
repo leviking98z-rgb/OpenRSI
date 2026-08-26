@@ -23,6 +23,7 @@ from slime.utils.misc import Box
 from slime.utils.reloadable_process_group import destroy_process_groups, monkey_patch_torch_dist, reload_process_groups
 from slime.utils.routing_replay import RoutingReplay
 from slime.utils.timer import Timer, inverse_timer, timer, with_defer
+from slime.utils.torchinductor_utils import configure_torchinductor_from_env
 from slime.utils.types import RolloutBatch
 
 from ...utils.profile_utils import TrainProfiler
@@ -51,6 +52,7 @@ class MegatronTrainRayActor(TrainRayActor):
         with_ref: bool = False,
         with_opd_teacher: bool = False,
     ) -> int | None:
+        configure_torchinductor_from_env()
         monkey_patch_torch_dist()
 
         super().init(args, role, with_ref, with_opd_teacher)

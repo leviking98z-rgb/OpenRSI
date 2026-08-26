@@ -7,6 +7,9 @@ from pathlib import Path
 SFT_ROOT = Path(__file__).resolve().parents[1]
 COMMON = SFT_ROOT / "slime_scripts/common/run_slime_sft.sh"
 RAY_NODE = SFT_ROOT / "slime_scripts/common/start_external_ray_node.sh"
+MEGATRON_ACTOR = (
+    SFT_ROOT / "slime/slime/backends/megatron_utils/actor.py"
+)
 
 
 def test_launchers_have_valid_bash_syntax() -> None:
@@ -39,3 +42,18 @@ def test_external_ray_contract_is_scheduler_neutral() -> None:
     assert '--working-dir "${SLIME_ROOT}"' in common_source
     assert "ssh " not in node_source
     assert '--address "${MASTER_ADDR}:${RAY_PORT}"' in node_source
+
+
+def test_external_ray_propagates_persistent_compiler_controls() -> None:
+    common_source = COMMON.read_text(encoding="utf-8")
+    actor_source = MEGATRON_ACTOR.read_text(encoding="utf-8")
+    for variable in (
+        "TRITON_CACHE_DIR",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "CUDA_CACHE_PATH",
+        "SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE",
+    ):
+        assert f'env_vars["{variable}"]' in common_source or (
+            f'"{variable}":' in common_source
+        )
+    assert "configure_torchinductor_from_env()" in actor_source

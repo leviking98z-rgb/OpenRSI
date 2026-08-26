@@ -344,12 +344,25 @@ export MOE_ENABLE_DEEPEP=0
 The first update on a newly provisioned node can be dominated by Triton
 autotuning rather than training. Keep `TRITON_CACHE_DIR`,
 `TORCHINDUCTOR_CACHE_DIR`, and `CUDA_CACHE_PATH` on persistent node-local
-storage across diagnostic retries. During a cold start, warm ranks may wait
-inside TP/EP/DP collectives while another rank compiles or benchmarks a
-sequence-dependent kernel; low GPU power on the waiting ranks alone is not
-evidence of a distributed deadlock. Confirm progress by sampling Python
-stacks on more than one rank and by checking cache-file activity before
-terminating the first update.
+storage across diagnostic retries. The common launcher forwards these paths
+to external Ray actors when they are set.
+
+During a cold start, warm ranks may wait inside TP/EP/DP collectives while
+another rank compiles or benchmarks a sequence-dependent kernel; low GPU power
+on the waiting ranks alone is not evidence of a distributed deadlock. Confirm
+progress by sampling Python stacks on more than one rank and by checking
+cache-file activity before terminating the first update. If a PyTorch build
+fails specifically while benchmarking an Inductor pointwise kernel, opt out of
+that benchmark without disabling Inductor:
+
+```bash
+export SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE=0
+```
+
+This selects a generated pointwise configuration without runtime benchmarking;
+it can trade a small amount of kernel performance for a reliable cold start
+but does not change the model, data, loss, or optimizer configuration. Leave
+the variable unset for the PyTorch default.
 
 ## Output and resume behavior
 

@@ -53,6 +53,10 @@ RUNTIME_DIR="${RUNTIME_DIR:-${OUTPUT_DIR}.runtime}"
 RAY_TMPDIR="${RAY_TMPDIR:-${RUNTIME_DIR}/ray}"
 RAY_CLUSTER_MODE="${RAY_CLUSTER_MODE:-local}"
 RAY_CLUSTER_WAIT_TIMEOUT="${RAY_CLUSTER_WAIT_TIMEOUT:-180}"
+TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-}"
+TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-}"
+CUDA_CACHE_PATH="${CUDA_CACHE_PATH:-}"
+SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE="${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE:-}"
 
 LR="${LR:-3e-5}"
 MIN_LR="${MIN_LR:-0.0}"
@@ -98,6 +102,12 @@ do
 done
 if [[ "${RAY_CLUSTER_MODE}" != "local" && "${RAY_CLUSTER_MODE}" != "external" ]]; then
   echo "[ERROR] RAY_CLUSTER_MODE must be local or external, got ${RAY_CLUSTER_MODE}" >&2
+  exit 2
+fi
+if [[ -n "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" \
+  && "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" != "0" \
+  && "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" != "1" ]]; then
+  echo "[ERROR] SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE must be 0 or 1." >&2
   exit 2
 fi
 if [[ "${RAY_CLUSTER_MODE}" == "external" ]]; then
@@ -401,7 +411,12 @@ RUNTIME_ENV_JSON="$(python3 - \
   "${TORCHINDUCTOR_COMPILE_THREADS:-}" \
   "${MASTER_ADDR}" \
   "${SOCKET_IFNAME}" \
-  "${NCCL_DEBUG:-}" <<'PY'
+  "${NCCL_DEBUG:-}" \
+  "${TRITON_CACHE_DIR}" \
+  "${TORCHINDUCTOR_CACHE_DIR}" \
+  "${CUDA_CACHE_PATH}" \
+  "${TMPDIR:-}" \
+  "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" <<'PY'
 import json
 import sys
 
@@ -416,6 +431,13 @@ env_vars = {
 compile_threads = sys.argv[4]
 socket_ifname = sys.argv[6]
 nccl_debug = sys.argv[7]
+optional_env = {
+    "TRITON_CACHE_DIR": sys.argv[8],
+    "TORCHINDUCTOR_CACHE_DIR": sys.argv[9],
+    "CUDA_CACHE_PATH": sys.argv[10],
+    "TMPDIR": sys.argv[11],
+    "SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE": sys.argv[12],
+}
 if compile_threads:
     env_vars["TORCHINDUCTOR_COMPILE_THREADS"] = compile_threads
 if socket_ifname:
@@ -424,6 +446,9 @@ if socket_ifname:
     env_vars["TP_SOCKET_IFNAME"] = socket_ifname
 if nccl_debug:
     env_vars["NCCL_DEBUG"] = nccl_debug
+for name, value in optional_env.items():
+    if value:
+        env_vars[name] = value
 
 print(
     json.dumps(
