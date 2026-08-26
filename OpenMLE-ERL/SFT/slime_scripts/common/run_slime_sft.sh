@@ -20,6 +20,7 @@ SAVE_OPTIMIZER="${SAVE_OPTIMIZER:-0}"
 SAVE_RNG="${SAVE_RNG:-0}"
 LOAD_OPTIMIZER="${LOAD_OPTIMIZER:-1}"
 LOAD_RNG="${LOAD_RNG:-1}"
+LOAD_ROLLOUT_STATE="${LOAD_ROLLOUT_STATE:-1}"
 USE_CHECKPOINT_OPT_PARAM_SCHEDULER="${USE_CHECKPOINT_OPT_PARAM_SCHEDULER:-1}"
 ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-128}"
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
@@ -92,7 +93,7 @@ if [[ ! -f "${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT_NAME}" ]]; then
   exit 2
 fi
 for flag_name in \
-  SAVE_OPTIMIZER SAVE_RNG LOAD_OPTIMIZER LOAD_RNG \
+  SAVE_OPTIMIZER SAVE_RNG LOAD_OPTIMIZER LOAD_RNG LOAD_ROLLOUT_STATE \
   USE_CHECKPOINT_OPT_PARAM_SCHEDULER
 do
   if [[ "${!flag_name}" != "0" && "${!flag_name}" != "1" ]]; then
@@ -132,6 +133,19 @@ if [[ -n "${LOAD_PATH}" ]]; then
   if [[ ! -f "${LOAD_PATH}/latest_checkpointed_iteration.txt" ]]; then
     echo "[ERROR] LOAD_PATH is missing latest_checkpointed_iteration.txt: ${LOAD_PATH}" >&2
     exit 2
+  fi
+  LOAD_ITERATION="$(tr -d '[:space:]' <"${LOAD_PATH}/latest_checkpointed_iteration.txt")"
+  if [[ ! "${LOAD_ITERATION}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] LOAD_PATH checkpoint iteration must be a non-negative integer." >&2
+    exit 2
+  fi
+  if [[ "${LOAD_ROLLOUT_STATE}" == "1" ]]; then
+    ROLLOUT_STATE_PATH="${LOAD_PATH}/rollout/global_dataset_state_dict_${LOAD_ITERATION}.pt"
+    if [[ ! -f "${ROLLOUT_STATE_PATH}" ]]; then
+      echo "[ERROR] LOAD_PATH is missing rollout dataset state: ${ROLLOUT_STATE_PATH}" >&2
+      echo "[ERROR] Set LOAD_ROLLOUT_STATE=0 only to restart the data sequence intentionally." >&2
+      exit 2
+    fi
   fi
 fi
 if [[ -e "${OUTPUT_DIR}" && "${ALLOW_EXISTING_OUTPUT:-0}" != "1" ]]; then

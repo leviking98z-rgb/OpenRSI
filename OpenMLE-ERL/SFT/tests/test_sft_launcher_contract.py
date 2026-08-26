@@ -27,10 +27,12 @@ def test_complete_checkpoint_and_resume_controls_are_explicit() -> None:
     source = COMMON.read_text(encoding="utf-8")
     assert 'SAVE_OPTIMIZER="${SAVE_OPTIMIZER:-0}"' in source
     assert 'SAVE_RNG="${SAVE_RNG:-0}"' in source
+    assert 'LOAD_ROLLOUT_STATE="${LOAD_ROLLOUT_STATE:-1}"' in source
     assert 'CKPT_ARGS+=(--load "${LOAD_PATH}")' in source
     assert "CKPT_ARGS+=(--no-save-optim)" in source
     assert "CKPT_ARGS+=(--no-save-rng)" in source
     assert "CKPT_ARGS+=(--use-checkpoint-opt_param-scheduler)" in source
+    assert "global_dataset_state_dict_${LOAD_ITERATION}.pt" in source
 
 
 def test_external_ray_contract_is_scheduler_neutral() -> None:

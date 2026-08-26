@@ -384,16 +384,23 @@ Resume from a complete checkpoint with:
 export LOAD_PATH=/workspace/output/previous-run
 export LOAD_OPTIMIZER=1
 export LOAD_RNG=1
+export LOAD_ROLLOUT_STATE=1
 export OUTPUT_DIR=/workspace/output/resumed-run
 bash slime_scripts/qwen3_6_35b/train.sh
 ```
 
 `LOAD_PATH` must contain `latest_checkpointed_iteration.txt`. When optimizer
 loading is enabled, the launcher also restores the checkpointed optimizer
-parameter scheduler. A full-parameter Adam checkpoint can be several times
-larger and slower to save than a model-only checkpoint, so measure the first
-save before selecting a production save interval. For the closest continuation
-semantics, resume with the same world size and parallel topology.
+parameter scheduler. Exact SFT continuation also requires
+`rollout/global_dataset_state_dict_<iteration>.pt`; this restores the shuffled
+dataset cursor and sample indices. The launcher checks for that file by
+default. Set `LOAD_ROLLOUT_STATE=0` only when deliberately restarting the data
+sequence rather than continuing it.
+
+A full-parameter Adam checkpoint can be several times larger and slower to
+save than a model-only checkpoint, so measure the first save before selecting
+a production save interval. For the closest continuation semantics, resume
+with the same world size and parallel topology.
 
 ## Third-party code and license
 
