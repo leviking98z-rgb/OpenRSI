@@ -92,6 +92,25 @@ minutes, 100 updates at ten to twenty-five minutes, and 205 updates above
 twenty-five minutes. Production retains only two rolling complete checkpoints
 in addition to model-only milestone artifacts.
 
+The first four-node attempt was manually stopped at zero updates after 17
+minutes. Later stack sampling showed that this was a cold-cache warm-up, not a
+confirmed DeepEP failure: warm ranks were waiting in MoE communication while
+a newly provisioned rank was actively autotuning
+`causal_conv1d_bwd`. The retry keeps the same data, batch, seed, LR, and
+TP/EP/DP topology but selects the standard `alltoall` dispatcher explicitly:
+
+```bash
+export MOE_TOKEN_DISPATCHER_TYPE=alltoall
+export MOE_ENABLE_DEEPEP=0
+```
+
+On that retry, update 0 completed 122 seconds after its batch entered
+training. Its loss was `0.42037994113253324`, versus
+`0.4203847862166073` for the identical batch on the single-node baseline
+(absolute difference about `4.85e-6`). This verifies a numerically healthy
+32-GPU forward/backward and optimizer update; early-step timings still include
+shape-dependent Triton autotuning and are not steady-state scaling results.
+
 Curves are retained in the `openrsi` W&B project:
 
 - released-LR divergence:
@@ -100,6 +119,8 @@ Curves are retained in the `openrsi` W&B project:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-core50-lr1e5>
 - 615-update adaptation:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-full-lr1e5>
+- four-node full-state checkpoint/resume gate:
+  <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-4node-fullstate-smoke10-continuous-alltoall>
 - two-update RL systems control:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/bu3sbqbl>
 

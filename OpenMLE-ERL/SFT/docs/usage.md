@@ -332,6 +332,25 @@ submitting the job. It does not use SSH or start remote processes itself, so
 the node supervisor, container runtime, or cluster scheduler remains
 responsible for process lifecycle.
 
+Qwen3.6 defaults to the `flex` MoE dispatcher with DeepEP. To run the model
+profile's standard all-to-all dispatcher instead, set both controls
+explicitly:
+
+```bash
+export MOE_TOKEN_DISPATCHER_TYPE=alltoall
+export MOE_ENABLE_DEEPEP=0
+```
+
+The first update on a newly provisioned node can be dominated by Triton
+autotuning rather than training. Keep `TRITON_CACHE_DIR`,
+`TORCHINDUCTOR_CACHE_DIR`, and `CUDA_CACHE_PATH` on persistent node-local
+storage across diagnostic retries. During a cold start, warm ranks may wait
+inside TP/EP/DP collectives while another rank compiles or benchmarks a
+sequence-dependent kernel; low GPU power on the waiting ranks alone is not
+evidence of a distributed deadlock. Confirm progress by sampling Python
+stacks on more than one rank and by checking cache-file activity before
+terminating the first update.
+
 ## Output and resume behavior
 
 Rollout output is resumable and includes progress files plus per-task artifacts. Data-selection commands write selected data and compact JSON summaries without embedding the private source corpus in the repository.
