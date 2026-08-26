@@ -101,6 +101,26 @@ if [ ! -d "/sys/class/net/${SOCKET_IFNAME}" ]; then
     echo "SOCKET_IFNAME=${SOCKET_IFNAME} does not exist; set it to the container's actual network interface" >&2
     exit 1
 fi
+SOCKET_IPV4=$(
+  python3 - "${SOCKET_IFNAME}" <<'PY'
+import socket
+import sys
+
+import psutil
+
+name = sys.argv[1]
+addresses = [
+    item.address
+    for item in psutil.net_if_addrs().get(name, [])
+    if item.family == socket.AF_INET
+]
+print(",".join(addresses))
+PY
+)
+if [ -z "${SOCKET_IPV4}" ]; then
+    echo "SOCKET_IFNAME=${SOCKET_IFNAME} exists but has no IPv4 address usable by Gloo" >&2
+    exit 1
+fi
 if [ -n "${HOSTFILE:-}" ]; then
     echo "Single-node synchronous mode does not accept HOSTFILE; use run_openmle_rl_sync_multi_node.sh" >&2
     exit 1
@@ -111,6 +131,8 @@ require_value GPU_BASE_URL
 require_value CPU_BASE_URL
 require_value LEADERBOARD_ROOTS
 require_value WANDB_KEY
+require_value WANDB_TEAM
+require_value WANDB_DIR
 require_value GPT_API_KEY
 require_value SANDBOX_API_KEY
 
@@ -208,7 +230,7 @@ if [ ! -r "${SLIME_ROOT}/train.py" ]; then
     exit 1
 fi
 echo "[PRECHECK] config=${CONFIG_FILE} model_config=${MODEL_CONFIG} sandbox=${GPU_BASE_URL}"
-echo "[PRECHECK] socket=${SOCKET_IFNAME} resume=${RESUME_MODEL_PATH:-disabled} load_optimizer=${LOAD_OPTIMIZER} load_rng=${LOAD_RNG}"
+echo "[PRECHECK] socket=${SOCKET_IFNAME} ipv4=${SOCKET_IPV4} resume=${RESUME_MODEL_PATH:-disabled} load_optimizer=${LOAD_OPTIMIZER} load_rng=${LOAD_RNG}"
 
 if [[ "${PRECHECK_ONLY:-0}" == "1" ]]; then
     echo "[PRECHECK] Configuration is complete; exiting before Ray/training launch."
@@ -477,9 +499,11 @@ WANDB_ARGS=(
    --use-wandb
    --use-tensorboard
    --wandb-project "${WANDB_PROJECT:-openmle-rl}"
+   --wandb-team "${WANDB_TEAM}"
    --wandb-group "${WANDB_GROUP_NAME}"
+   --wandb-mode "${WANDB_MODE:-online}"
+   --wandb-dir "${WANDB_DIR}"
    --disable-wandb-random-suffix
-   --wandb-key "${WANDB_KEY}"
 )
 
 # SGLang rollout defaults match the proven notebook@639 sync path
@@ -547,7 +571,7 @@ ray start --head --node-ip-address "${MASTER_ADDR}" --port "${RAY_PORT}" --dashb
 
 RUNTIME_ENV_JSON="{
   \"env_vars\": {
-    \"PYTHONPATH\": \"/root/Megatron-LM/:${SLIME_ROOT}:${OPS_DIR}\",
+    \"PYTHONPATH\": \"/x/pydeps:/root/Megatron-LM/:${SLIME_ROOT}:${OPS_DIR}\",
     \"MASTER_ADDR\": \"${MASTER_ADDR}\",
     \"GLOO_SOCKET_IFNAME\": \"${SOCKET_IFNAME}\",
     \"TP_SOCKET_IFNAME\": \"${SOCKET_IFNAME}\",
@@ -560,8 +584,8 @@ RUNTIME_ENV_JSON="{
     \"RAY_TMPDIR\": \"${RAY_TMPDIR}\",
     \"RAY_SESSION_DIR\": \"${RAY_SESSION_DIR}\",
     \"WANDB_MODE\": \"${WANDB_MODE:-online}\",
+    \"WANDB_INIT_TIMEOUT\": \"${WANDB_INIT_TIMEOUT:-600}\",
     \"GPT_API_KEY\": \"${GPT_API_KEY}\",
-    \"SANDBOX_API_KEY\": \"${SANDBOX_API_KEY}\",
     \"GPT_BASE_URL\": \"${GPT_BASE_URL}\",
     \"HF_ENDPOINT\": \"${HF_ENDPOINT}\",
     \"TENSORBOARD_DIR\": \"${TENSORBOARD_DIR}\",
@@ -654,6 +678,11 @@ for JOB_SUBMIT_ATTEMPT in $(seq 1 30); do
    "$@"; then
     JOB_SUBMIT_STATUS=0
     break
+  fi
+  if ray job status "${JOB_NAME}" \
+    --address="http://127.0.0.1:${RAY_DASHBOARD_PORT}" >/dev/null 2>&1; then
+    echo "[RAY JOB] submitted job exited non-zero; refusing duplicate submission id ${JOB_NAME}" >&2
+    exit 1
   fi
   echo "[RAY JOB] agent not ready; retrying in 2s" >&2
   sleep 2
