@@ -111,6 +111,31 @@ training. Its loss was `0.42037994113253324`, versus
 32-GPU forward/backward and optimizer update; early-step timings still include
 shape-dependent Triton autotuning and are not steady-state scaling results.
 
+The retry completed all ten updates and its Ray job exited successfully.
+Each complete checkpoint contains 67 files and exactly 497,844,361,026 bytes.
+The saves after updates 5 and 10 took 469.51 and 492.13 seconds. Distributed
+checkpoint metadata includes the Adam first and second moments, parameter
+shards, and per-rank RNG state; the common state includes the iteration and
+optimizer scheduler. These measurements select a 50-update production save
+interval under the policy above.
+
+Warm all-to-all updates 5 through 9 took 141.48, 138.56, 189.83, 166.17, and
+141.27 seconds of actor training. The matching single-node updates took
+112.68, 115.30, 119.71, 112.76, and 116.07 seconds. The four-node standard
+all-to-all configuration is therefore a correctness baseline, not yet a
+production speedup: DP reductions cross nodes over NCCL sockets and optimizer
+state is CPU-offloaded. A warmed backend/topology benchmark is required
+before starting the 615-update lane.
+
+The ten-update gate uses its own ten-update cosine schedule. Its LR curve must
+not be compared with the 615-update production trajectory; the gate tests
+distributed correctness and checkpoint continuity.
+
+The independent resume run loads complete iteration 4 state and reruns
+updates 5 through 9. Its curve is:
+<https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-4node-fullstate-smoke10-resume5-alltoall>.
+Final numerical continuity results are added only after that job completes.
+
 Curves are retained in the `openrsi` W&B project:
 
 - released-LR divergence:
@@ -121,6 +146,8 @@ Curves are retained in the `openrsi` W&B project:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-full-lr1e5>
 - four-node full-state checkpoint/resume gate:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-4node-fullstate-smoke10-continuous-alltoall>
+- four-node resume-from-update-5 comparison:
+  <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/openrsi-sft-qwen36-h20-4node-fullstate-smoke10-resume5-alltoall>
 - two-update RL systems control:
   <https://wandb.ai/leviking98z-zhejiang-university/openrsi/runs/bu3sbqbl>
 
