@@ -301,11 +301,67 @@ CHECK_CONFIG_ONLY=1 bash slime_scripts/qwen3_30b/train.sh
 CHECK_CONFIG_ONLY=1 bash slime_scripts/qwen3_6_35b/train.sh
 ```
 
+### External multi-node Ray
+
+The common SFT launcher can submit training to a Ray cluster that was started
+outside the driver process. Start one persistent process on each node:
+
+```bash
+# Head node.
+MASTER_ADDR=10.0.0.10 NODE_IP=10.0.0.10 \
+  bash slime_scripts/common/start_external_ray_node.sh head
+
+# Worker node.
+MASTER_ADDR=10.0.0.10 NODE_IP=10.0.0.11 \
+  bash slime_scripts/common/start_external_ray_node.sh worker
+```
+
+Then invoke the model launcher on the head node:
+
+```bash
+export RAY_CLUSTER_MODE=external
+export MASTER_ADDR=10.0.0.10
+export SOCKET_IFNAME=eth0
+export ACTOR_NUM_NODES=2
+export ACTOR_NUM_GPUS_PER_NODE=8
+bash slime_scripts/qwen3_6_35b/train.sh
+```
+
+External mode waits until Ray reports the requested node and GPU counts before
+submitting the job. It does not use SSH or start remote processes itself, so
+the node supervisor, container runtime, or cluster scheduler remains
+responsible for process lifecycle.
+
 ## Output and resume behavior
 
 Rollout output is resumable and includes progress files plus per-task artifacts. Data-selection commands write selected data and compact JSON summaries without embedding the private source corpus in the repository.
 
 Training refuses to overwrite an existing output directory. Set `ALLOW_EXISTING_OUTPUT=1` only for an intentional resume and pass any required checkpoint controls through the documented environment variables in `slime_scripts/common/run_slime_sft.sh`.
+
+SFT checkpoints remain model-only by default. Set both flags to retain complete
+training state:
+
+```bash
+export SAVE_OPTIMIZER=1
+export SAVE_RNG=1
+```
+
+Resume from a complete checkpoint with:
+
+```bash
+export LOAD_PATH=/workspace/output/previous-run
+export LOAD_OPTIMIZER=1
+export LOAD_RNG=1
+export OUTPUT_DIR=/workspace/output/resumed-run
+bash slime_scripts/qwen3_6_35b/train.sh
+```
+
+`LOAD_PATH` must contain `latest_checkpointed_iteration.txt`. When optimizer
+loading is enabled, the launcher also restores the checkpointed optimizer
+parameter scheduler. A full-parameter Adam checkpoint can be several times
+larger and slower to save than a model-only checkpoint, so measure the first
+save before selecting a production save interval. For the closest continuation
+semantics, resume with the same world size and parallel topology.
 
 ## Third-party code and license
 

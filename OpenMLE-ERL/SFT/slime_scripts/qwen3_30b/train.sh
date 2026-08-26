@@ -13,7 +13,8 @@ Required environment variables:
 
 Optional environment variables include NUM_EPOCH, LR, GLOBAL_BATCH_SIZE,
 ROLLOUT_BATCH_SIZE, ROLLOUT_MAX_CONTEXT_LEN, ACTOR_NUM_NODES,
-ACTOR_NUM_GPUS_PER_NODE, MASTER_ADDR, and the Ray port settings.
+ACTOR_NUM_GPUS_PER_NODE, MASTER_ADDR, RAY_CLUSTER_MODE, LOAD_PATH,
+SAVE_OPTIMIZER, SAVE_RNG, and the Ray port settings.
 Set USE_WANDB=1 and WANDB_API_KEY to enable Weights & Biases.
 EOF
   exit 0

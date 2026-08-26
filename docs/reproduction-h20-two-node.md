@@ -10,8 +10,9 @@ training run.
   `1f477c48b6b464e196b651abc229dfe75247315a`;
 - public OpenMLE SFT parquet revision:
   `dcb1d89f67c50660b2322efdb58f0769b0036395`;
-- one 8 x NVIDIA H20 96 GB node for SFT;
-- one 8 x NVIDIA H20 96 GB node split between TP4 inference and four
+- an eight-H20 paper-topology SFT lane followed by a separate two-node,
+  16-H20 acceleration lane;
+- the second node is otherwise used for TP4 inference and four
   Sandbox/NatureBench lanes.
 
 The public release does not include the exact RL train/eval data, historical
@@ -55,6 +56,38 @@ The 50-update gate is not a resumable segment of the 615-update run: it uses a
 50-update cosine schedule and saves neither optimizer nor RNG state. The
 full-run adaptation must use its own 615-update schedule from the base
 checkpoint.
+
+The first single-node `1e-5` full-schedule attempt was intentionally stopped
+after 70 healthy optimizer updates when the reproduction budget expanded to
+two nodes. It had not reached its 205-update model-only save interval, so the
+two-node lane also starts from the base checkpoint.
+
+## Two-node checkpoint/resume gate
+
+The two-node lane keeps the released global batch size of 128 and the
+TP=2/EP=8 model topology while expanding the Ray training world to 16 GPUs.
+This changes distributed reduction and data-sharding order, so it is an
+acceleration adaptation rather than a bitwise replay of the eight-GPU lane.
+
+The common launcher supports a scheduler-neutral external Ray cluster through
+`RAY_CLUSTER_MODE=external`. It validates that Ray exposes the requested node
+and GPU counts before submitting training. `LOAD_PATH` selects a saved
+Megatron checkpoint independently of the original `REF_LOAD_PATH`.
+
+Complete training-state saves are opt-in:
+
+```bash
+export SAVE_OPTIMIZER=1
+export SAVE_RNG=1
+```
+
+The acceleration gate runs ten optimizer updates, saves complete state after
+update five, and resumes from that checkpoint to verify loss/LR/data
+continuity. The measured checkpoint size and save duration determine the
+production interval: 50 updates when a save takes at most ten minutes, 100
+updates at ten to twenty-five minutes, and 205 updates above twenty-five
+minutes. Production retains only two rolling complete checkpoints in addition
+to model-only milestone artifacts.
 
 Curves are retained in the `openrsi` W&B project:
 

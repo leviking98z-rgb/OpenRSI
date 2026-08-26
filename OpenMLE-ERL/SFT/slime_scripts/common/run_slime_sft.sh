@@ -10,11 +10,17 @@ MODEL_PATH="${MODEL_PATH:?Set MODEL_PATH to the Hugging Face model directory.}"
 REF_LOAD_PATH="${REF_LOAD_PATH:?Set REF_LOAD_PATH to the converted torch-dist checkpoint.}"
 OUTPUT_DIR="${OUTPUT_DIR:?Set OUTPUT_DIR to a new checkpoint directory.}"
 MODEL_SCRIPT_NAME="${MODEL_SCRIPT_NAME:?MODEL_SCRIPT_NAME must be set by the model profile.}"
+LOAD_PATH="${LOAD_PATH:-}"
 
 INPUT_KEY="${INPUT_KEY:-messages}"
 NUM_EPOCH="${NUM_EPOCH:-3}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-}"
+SAVE_OPTIMIZER="${SAVE_OPTIMIZER:-0}"
+SAVE_RNG="${SAVE_RNG:-0}"
+LOAD_OPTIMIZER="${LOAD_OPTIMIZER:-1}"
+LOAD_RNG="${LOAD_RNG:-1}"
+USE_CHECKPOINT_OPT_PARAM_SCHEDULER="${USE_CHECKPOINT_OPT_PARAM_SCHEDULER:-1}"
 ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-128}"
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
 ROLLOUT_MAX_CONTEXT_LEN="${ROLLOUT_MAX_CONTEXT_LEN:-32768}"
@@ -35,6 +41,7 @@ USE_SEQUENCE_PARALLEL="${USE_SEQUENCE_PARALLEL:-1}"
 ACTOR_NUM_NODES="${ACTOR_NUM_NODES:-1}"
 ACTOR_NUM_GPUS_PER_NODE="${ACTOR_NUM_GPUS_PER_NODE:-8}"
 MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+SOCKET_IFNAME="${SOCKET_IFNAME:-}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8265}"
 RAY_PORT="${RAY_PORT:-6379}"
@@ -44,6 +51,8 @@ MIN_WORKER_PORT="${MIN_WORKER_PORT:-10002}"
 MAX_WORKER_PORT="${MAX_WORKER_PORT:-19999}"
 RUNTIME_DIR="${RUNTIME_DIR:-${OUTPUT_DIR}.runtime}"
 RAY_TMPDIR="${RAY_TMPDIR:-${RUNTIME_DIR}/ray}"
+RAY_CLUSTER_MODE="${RAY_CLUSTER_MODE:-local}"
+RAY_CLUSTER_WAIT_TIMEOUT="${RAY_CLUSTER_WAIT_TIMEOUT:-180}"
 
 LR="${LR:-3e-5}"
 MIN_LR="${MIN_LR:-0.0}"
@@ -77,6 +86,43 @@ fi
 if [[ ! -f "${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT_NAME}" ]]; then
   echo "[ERROR] Slime model profile not found: ${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT_NAME}" >&2
   exit 2
+fi
+for flag_name in \
+  SAVE_OPTIMIZER SAVE_RNG LOAD_OPTIMIZER LOAD_RNG \
+  USE_CHECKPOINT_OPT_PARAM_SCHEDULER
+do
+  if [[ "${!flag_name}" != "0" && "${!flag_name}" != "1" ]]; then
+    echo "[ERROR] ${flag_name} must be 0 or 1, got ${!flag_name}" >&2
+    exit 2
+  fi
+done
+if [[ "${RAY_CLUSTER_MODE}" != "local" && "${RAY_CLUSTER_MODE}" != "external" ]]; then
+  echo "[ERROR] RAY_CLUSTER_MODE must be local or external, got ${RAY_CLUSTER_MODE}" >&2
+  exit 2
+fi
+if [[ "${RAY_CLUSTER_MODE}" == "external" ]]; then
+  if [[ "${ACTOR_NUM_NODES}" -lt 2 ]]; then
+    echo "[ERROR] External Ray mode requires ACTOR_NUM_NODES >= 2." >&2
+    exit 2
+  fi
+  if [[ "${MASTER_ADDR}" == "127.0.0.1" || "${MASTER_ADDR}" == "localhost" ]]; then
+    echo "[ERROR] External Ray mode requires a non-loopback MASTER_ADDR." >&2
+    exit 2
+  fi
+  if [[ -n "${SOCKET_IFNAME}" && ! -d "/sys/class/net/${SOCKET_IFNAME}" ]]; then
+    echo "[ERROR] SOCKET_IFNAME does not exist: ${SOCKET_IFNAME}" >&2
+    exit 2
+  fi
+fi
+if [[ -n "${LOAD_PATH}" ]]; then
+  if [[ ! -d "${LOAD_PATH}" ]]; then
+    echo "[ERROR] LOAD_PATH is not a directory: ${LOAD_PATH}" >&2
+    exit 2
+  fi
+  if [[ ! -f "${LOAD_PATH}/latest_checkpointed_iteration.txt" ]]; then
+    echo "[ERROR] LOAD_PATH is missing latest_checkpointed_iteration.txt: ${LOAD_PATH}" >&2
+    exit 2
+  fi
 fi
 if [[ -e "${OUTPUT_DIR}" && "${ALLOW_EXISTING_OUTPUT:-0}" != "1" ]]; then
   echo "[ERROR] OUTPUT_DIR already exists. Set ALLOW_EXISTING_OUTPUT=1 only when resuming intentionally." >&2
@@ -151,9 +197,24 @@ CKPT_ARGS=(
   --ref-load "${REF_LOAD_PATH}"
   --save "${OUTPUT_DIR}"
   --save-interval "${SAVE_INTERVAL}"
-  --no-save-optim
-  --no-save-rng
 )
+if [[ -n "${LOAD_PATH}" ]]; then
+  CKPT_ARGS+=(--load "${LOAD_PATH}")
+  if [[ "${LOAD_OPTIMIZER}" != "1" ]]; then
+    CKPT_ARGS+=(--no-load-optim)
+  elif [[ "${USE_CHECKPOINT_OPT_PARAM_SCHEDULER}" == "1" ]]; then
+    CKPT_ARGS+=(--use-checkpoint-opt_param-scheduler)
+  fi
+  if [[ "${LOAD_RNG}" != "1" ]]; then
+    CKPT_ARGS+=(--no-load-rng)
+  fi
+fi
+if [[ "${SAVE_OPTIMIZER}" != "1" ]]; then
+  CKPT_ARGS+=(--no-save-optim)
+fi
+if [[ "${SAVE_RNG}" != "1" ]]; then
+  CKPT_ARGS+=(--no-save-rng)
+fi
 
 SFT_ARGS=(
   --rollout-function-path slime.rollout.sft_rollout.generate_rollout
@@ -250,7 +311,8 @@ if ! python3 -c "import megatron" >/dev/null 2>&1; then
 fi
 PYTHONPATH_VALUE="${MEGATRON_ROOT:-}${MEGATRON_ROOT:+:}${PYTHONPATH:-}"
 
-if ! python3 - "${DASHBOARD_PORT}" <<'PY'
+dashboard_ready() {
+  python3 - "${DASHBOARD_PORT}" <<'PY'
 import socket
 import sys
 
@@ -260,22 +322,86 @@ try:
 except OSError:
     raise SystemExit(1)
 PY
-then
-  ray start --head \
-    --node-ip-address "${MASTER_ADDR}" \
-    --num-gpus "${ACTOR_NUM_GPUS_PER_NODE}" \
-    --disable-usage-stats \
-    --dashboard-host=127.0.0.1 \
-    --dashboard-port="${DASHBOARD_PORT}" \
-    --port "${RAY_PORT}" \
-    --ray-client-server-port "${RAY_CLIENT_SERVER_PORT}" \
-    --dashboard-agent-listen-port "${DASHBOARD_AGENT_LISTEN_PORT}" \
-    --min-worker-port "${MIN_WORKER_PORT}" \
-    --max-worker-port "${MAX_WORKER_PORT}" \
-    --temp-dir "${RAY_TMPDIR}"
+}
+
+if [[ "${RAY_CLUSTER_MODE}" == "local" ]]; then
+  if ! dashboard_ready; then
+    ray start --head \
+      --node-ip-address "${MASTER_ADDR}" \
+      --num-gpus "${ACTOR_NUM_GPUS_PER_NODE}" \
+      --disable-usage-stats \
+      --dashboard-host=127.0.0.1 \
+      --dashboard-port="${DASHBOARD_PORT}" \
+      --port "${RAY_PORT}" \
+      --ray-client-server-port "${RAY_CLIENT_SERVER_PORT}" \
+      --dashboard-agent-listen-port "${DASHBOARD_AGENT_LISTEN_PORT}" \
+      --min-worker-port "${MIN_WORKER_PORT}" \
+      --max-worker-port "${MAX_WORKER_PORT}" \
+      --temp-dir "${RAY_TMPDIR}"
+  fi
+else
+  if ! dashboard_ready; then
+    echo "[ERROR] External Ray dashboard is not reachable on 127.0.0.1:${DASHBOARD_PORT}." >&2
+    echo "[ERROR] Start the head and worker nodes before invoking the SFT launcher." >&2
+    exit 2
+  fi
+  python3 - \
+    "${MASTER_ADDR}" \
+    "${RAY_PORT}" \
+    "${ACTOR_NUM_NODES}" \
+    "${ACTOR_NUM_GPUS_PER_NODE}" \
+    "${RAY_CLUSTER_WAIT_TIMEOUT}" <<'PY'
+import json
+import sys
+import time
+
+import ray
+
+master_addr = sys.argv[1]
+ray_port = int(sys.argv[2])
+expected_nodes = int(sys.argv[3])
+gpus_per_node = int(sys.argv[4])
+timeout = float(sys.argv[5])
+expected_gpus = expected_nodes * gpus_per_node
+deadline = time.time() + timeout
+
+ray.init(address=f"{master_addr}:{ray_port}")
+try:
+    while True:
+        alive_nodes = [node for node in ray.nodes() if node.get("Alive")]
+        resources = ray.cluster_resources()
+        gpu_count = float(resources.get("GPU", 0))
+        status = {
+            "alive_nodes": [
+                node.get("NodeManagerAddress") for node in alive_nodes
+            ],
+            "expected_gpus": expected_gpus,
+            "expected_nodes": expected_nodes,
+            "gpu_count": gpu_count,
+        }
+        print("[RAY_WAIT]", json.dumps(status, sort_keys=True), flush=True)
+        if len(alive_nodes) >= expected_nodes and gpu_count >= expected_gpus:
+            break
+        if time.time() >= deadline:
+            raise SystemExit(
+                "Timed out waiting for the external Ray cluster: "
+                f"expected {expected_nodes} nodes/{expected_gpus} GPUs, "
+                f"got {len(alive_nodes)} nodes/{gpu_count:g} GPUs"
+            )
+        time.sleep(2)
+finally:
+    ray.shutdown()
+PY
 fi
 
-RUNTIME_ENV_JSON="$(python3 - "${PYTHONPATH_VALUE}" "${HAS_NVLINK}" "${RAY_TMPDIR}" "${TORCHINDUCTOR_COMPILE_THREADS:-}" <<'PY'
+RUNTIME_ENV_JSON="$(python3 - \
+  "${PYTHONPATH_VALUE}" \
+  "${HAS_NVLINK}" \
+  "${RAY_TMPDIR}" \
+  "${TORCHINDUCTOR_COMPILE_THREADS:-}" \
+  "${MASTER_ADDR}" \
+  "${SOCKET_IFNAME}" \
+  "${NCCL_DEBUG:-}" <<'PY'
 import json
 import sys
 
@@ -285,9 +411,19 @@ env_vars = {
     "NCCL_NVLS_ENABLE": sys.argv[2],
     "PYTORCH_ALLOC_CONF": "expandable_segments:True",
     "RAY_TMPDIR": sys.argv[3],
+    "MASTER_ADDR": sys.argv[5],
 }
-if sys.argv[4]:
-    env_vars["TORCHINDUCTOR_COMPILE_THREADS"] = sys.argv[4]
+compile_threads = sys.argv[4]
+socket_ifname = sys.argv[6]
+nccl_debug = sys.argv[7]
+if compile_threads:
+    env_vars["TORCHINDUCTOR_COMPILE_THREADS"] = compile_threads
+if socket_ifname:
+    env_vars["GLOO_SOCKET_IFNAME"] = socket_ifname
+    env_vars["NCCL_SOCKET_IFNAME"] = socket_ifname
+    env_vars["TP_SOCKET_IFNAME"] = socket_ifname
+if nccl_debug:
+    env_vars["NCCL_DEBUG"] = nccl_debug
 
 print(
     json.dumps(
