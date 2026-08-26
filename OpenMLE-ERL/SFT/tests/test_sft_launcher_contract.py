@@ -10,6 +10,10 @@ RAY_NODE = SFT_ROOT / "slime_scripts/common/start_external_ray_node.sh"
 MEGATRON_ACTOR = (
     SFT_ROOT / "slime/slime/backends/megatron_utils/actor.py"
 )
+MEGATRON_MODEL = (
+    SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
+)
+ASYNC_TRAIN = SFT_ROOT / "slime/train_async.py"
 
 
 def test_launchers_have_valid_bash_syntax() -> None:
@@ -59,3 +63,30 @@ def test_external_ray_propagates_persistent_compiler_controls() -> None:
             f'"{variable}":' in common_source
         )
     assert "configure_torchinductor_from_env()" in actor_source
+
+
+def test_async_checkpoint_precedes_next_dataset_prefetch() -> None:
+    source = ASYNC_TRAIN.read_text(encoding="utf-8")
+    checkpoint_guard = source.index("save_this_step = (")
+    guarded_prefetch = source.index(
+        "if not save_this_step and rollout_id + 1 < args.num_rollout:"
+    )
+    cursor_save = source.index("rollout_manager.save.remote(rollout_id)")
+    resumed_prefetch = source.index(
+        "# Resume asynchronous overlap after the cursor has been persisted."
+    )
+    assert checkpoint_guard < guarded_prefetch < cursor_save < resumed_prefetch
+
+
+def test_loaded_scheduler_is_not_advanced_twice() -> None:
+    source = MEGATRON_MODEL.read_text(encoding="utf-8")
+    guard = source.index("if opt_param_scheduler.num_steps == 0:")
+    advance = source.index(
+        "opt_param_scheduler.step(increment=iteration * args.global_batch_size)",
+        guard,
+    )
+    model_return = source.index(
+        "return model, optimizer, opt_param_scheduler, iteration",
+        advance,
+    )
+    assert guard < advance < model_return

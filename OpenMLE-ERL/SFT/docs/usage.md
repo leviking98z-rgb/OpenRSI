@@ -397,6 +397,11 @@ dataset cursor and sample indices. The launcher checks for that file by
 default. Set `LOAD_ROLLOUT_STATE=0` only when deliberately restarting the data
 sequence rather than continuing it.
 
+In asynchronous SFT, checkpoint-boundary prefetch is deferred until after the
+global dataset state is saved. This keeps the persisted cursor at the first
+unconsumed batch. Megatron-restored scheduler progress is also used directly;
+it is not advanced a second time during actor initialization.
+
 A full-parameter Adam checkpoint can be several times larger and slower to
 save than a model-only checkpoint, so measure the first save before selecting
 a production save interval. For the closest continuation semantics, resume

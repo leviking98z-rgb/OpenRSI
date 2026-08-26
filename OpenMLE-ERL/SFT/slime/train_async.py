@@ -40,8 +40,19 @@ def train(args):
         if rollout_data_next_future is not None:
             rollout_data_curr_ref = ray.get(rollout_data_next_future)
 
-        # Start the next rollout early.
-        if rollout_id + 1 < args.num_rollout:
+        save_this_step = (
+            os.environ.get("SLIME_DISABLE_SAVE", "0") != "1"
+            and should_run_periodic_action(
+                rollout_id,
+                args.save_interval,
+                num_rollout_per_epoch,
+                args.num_rollout,
+            )
+        )
+
+        # A global-dataset checkpoint must be written before the next generate
+        # call advances its cursor. Defer only the checkpoint-boundary prefetch.
+        if not save_this_step and rollout_id + 1 < args.num_rollout:
             rollout_data_next_future = rollout_manager.generate.remote(rollout_id + 1)
 
         if args.use_critic:
@@ -52,10 +63,7 @@ def train(args):
         else:
             ray.get(actor_model.async_train(rollout_id, rollout_data_curr_ref))
 
-        if (
-            os.environ.get("SLIME_DISABLE_SAVE", "0") != "1"
-            and should_run_periodic_action(rollout_id, args.save_interval, num_rollout_per_epoch, args.num_rollout)
-        ):
+        if save_this_step:
             actor_model.save_model(
                 rollout_id,
                 force_sync=rollout_id == args.num_rollout - 1,
@@ -70,6 +78,9 @@ def train(args):
             # Save database snapshot if enabled
             ray.get(rollout_manager.save_db_snapshot.remote(rollout_id))
 
+            # Resume asynchronous overlap after the cursor has been persisted.
+            if rollout_id + 1 < args.num_rollout:
+                rollout_data_next_future = rollout_manager.generate.remote(rollout_id + 1)
 
         if (rollout_id + 1) % args.update_weights_interval == 0:
             # sync generate before update weights to prevent update weight in the middle of generation

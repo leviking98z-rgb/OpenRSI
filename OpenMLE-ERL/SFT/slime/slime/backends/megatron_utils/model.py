@@ -785,6 +785,10 @@ def initialize_model_and_optimizer(
     )
     clear_memory()
 
-    opt_param_scheduler.step(increment=iteration * args.global_batch_size)
+    # Megatron restores the scheduler's num_steps together with optimizer
+    # state. Advancing it again here would double-count all completed updates
+    # and can drive a resumed cosine schedule immediately to its minimum LR.
+    if opt_param_scheduler.num_steps == 0:
+        opt_param_scheduler.step(increment=iteration * args.global_batch_size)
 
     return model, optimizer, opt_param_scheduler, iteration
