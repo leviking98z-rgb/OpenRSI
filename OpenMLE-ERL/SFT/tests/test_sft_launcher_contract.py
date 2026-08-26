@@ -36,5 +36,6 @@ def test_external_ray_contract_is_scheduler_neutral() -> None:
     assert 'RAY_CLUSTER_MODE="${RAY_CLUSTER_MODE:-local}"' in common_source
     assert '"expected_nodes": expected_nodes' in common_source
     assert '"expected_gpus": expected_gpus' in common_source
+    assert '--working-dir "${SLIME_ROOT}"' in common_source
     assert "ssh " not in node_source
     assert '--address "${MASTER_ADDR}:${RAY_PORT}"' in node_source

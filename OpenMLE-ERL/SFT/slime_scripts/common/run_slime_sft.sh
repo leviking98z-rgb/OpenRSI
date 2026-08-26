@@ -437,6 +437,7 @@ PY
 
 ray job submit --address="http://127.0.0.1:${DASHBOARD_PORT}" \
   --submission-id "${JOB_NAME}" \
+  --working-dir "${SLIME_ROOT}" \
   --runtime-env-json="${RUNTIME_ENV_JSON}" \
   -- python3 train_async.py \
   --actor-num-nodes "${ACTOR_NUM_NODES}" \
