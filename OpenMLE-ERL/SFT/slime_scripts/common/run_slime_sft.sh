@@ -18,10 +18,12 @@ NUM_ROLLOUT="${NUM_ROLLOUT:-}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-}"
 SAVE_OPTIMIZER="${SAVE_OPTIMIZER:-0}"
 SAVE_RNG="${SAVE_RNG:-0}"
+ASYNC_SAVE="${ASYNC_SAVE:-0}"
 LOAD_OPTIMIZER="${LOAD_OPTIMIZER:-1}"
 LOAD_RNG="${LOAD_RNG:-1}"
 LOAD_ROLLOUT_STATE="${LOAD_ROLLOUT_STATE:-1}"
 USE_CHECKPOINT_OPT_PARAM_SCHEDULER="${USE_CHECKPOINT_OPT_PARAM_SCHEDULER:-1}"
+SLIME_DISABLE_SAVE="${SLIME_DISABLE_SAVE:-0}"
 ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-128}"
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
 ROLLOUT_MAX_CONTEXT_LEN="${ROLLOUT_MAX_CONTEXT_LEN:-32768}"
@@ -38,6 +40,8 @@ CONTEXT_PARALLEL_SIZE="${CONTEXT_PARALLEL_SIZE:-1}"
 EXPERT_MODEL_PARALLEL_SIZE="${EXPERT_MODEL_PARALLEL_SIZE:-1}"
 EXPERT_TENSOR_PARALLEL_SIZE="${EXPERT_TENSOR_PARALLEL_SIZE:-1}"
 USE_SEQUENCE_PARALLEL="${USE_SEQUENCE_PARALLEL:-1}"
+OVERLAP_GRAD_REDUCE="${OVERLAP_GRAD_REDUCE:-0}"
+OVERLAP_PARAM_GATHER="${OVERLAP_PARAM_GATHER:-0}"
 
 ACTOR_NUM_NODES="${ACTOR_NUM_NODES:-1}"
 ACTOR_NUM_GPUS_PER_NODE="${ACTOR_NUM_GPUS_PER_NODE:-8}"
@@ -93,8 +97,9 @@ if [[ ! -f "${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT_NAME}" ]]; then
   exit 2
 fi
 for flag_name in \
-  SAVE_OPTIMIZER SAVE_RNG LOAD_OPTIMIZER LOAD_RNG LOAD_ROLLOUT_STATE \
-  USE_CHECKPOINT_OPT_PARAM_SCHEDULER
+  SAVE_OPTIMIZER SAVE_RNG ASYNC_SAVE LOAD_OPTIMIZER LOAD_RNG \
+  LOAD_ROLLOUT_STATE USE_CHECKPOINT_OPT_PARAM_SCHEDULER \
+  SLIME_DISABLE_SAVE OVERLAP_GRAD_REDUCE OVERLAP_PARAM_GATHER
 do
   if [[ "${!flag_name}" != "0" && "${!flag_name}" != "1" ]]; then
     echo "[ERROR] ${flag_name} must be 0 or 1, got ${!flag_name}" >&2
@@ -239,6 +244,9 @@ fi
 if [[ "${SAVE_RNG}" != "1" ]]; then
   CKPT_ARGS+=(--no-save-rng)
 fi
+if [[ "${ASYNC_SAVE}" == "1" ]]; then
+  CKPT_ARGS+=(--async-save)
+fi
 
 SFT_ARGS=(
   --rollout-function-path slime.rollout.sft_rollout.generate_rollout
@@ -301,6 +309,12 @@ if (( LOG_PROBS_CHUNK_SIZE > 0 )); then
 fi
 if [[ "${USE_SEQUENCE_PARALLEL}" == "1" ]]; then
   PERF_ARGS+=(--sequence-parallel)
+fi
+if [[ "${OVERLAP_GRAD_REDUCE}" == "1" ]]; then
+  PERF_ARGS+=(--overlap-grad-reduce)
+fi
+if [[ "${OVERLAP_PARAM_GATHER}" == "1" ]]; then
+  PERF_ARGS+=(--overlap-param-gather)
 fi
 
 MISC_ARGS=(
@@ -430,8 +444,10 @@ RUNTIME_ENV_JSON="$(python3 - \
   "${TORCHINDUCTOR_CACHE_DIR}" \
   "${CUDA_CACHE_PATH}" \
   "${TMPDIR:-}" \
-  "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" <<'PY'
+  "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" \
+  "${SLIME_DISABLE_SAVE}" <<'PY'
 import json
+import os
 import sys
 
 env_vars = {
@@ -451,6 +467,7 @@ optional_env = {
     "CUDA_CACHE_PATH": sys.argv[10],
     "TMPDIR": sys.argv[11],
     "SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE": sys.argv[12],
+    "SLIME_DISABLE_SAVE": sys.argv[13],
 }
 if compile_threads:
     env_vars["TORCHINDUCTOR_COMPILE_THREADS"] = compile_threads
@@ -461,6 +478,27 @@ if socket_ifname:
 if nccl_debug:
     env_vars["NCCL_DEBUG"] = nccl_debug
 for name, value in optional_env.items():
+    if value:
+        env_vars[name] = value
+
+# Ray jobs do not reliably inherit the submitting shell's full environment.
+# Propagate only the communication controls that are safe and relevant to the
+# training workers so multi-node jobs can use RDMA/GDR instead of silently
+# falling back to host-staged TCP sockets.
+for name in (
+    "NCCL_IB_DISABLE",
+    "NCCL_IB_HCA",
+    "NCCL_IB_GID_INDEX",
+    "NCCL_IB_SL",
+    "NCCL_IB_TC",
+    "NCCL_IB_QPS_PER_CONNECTION",
+    "NCCL_NET_GDR_LEVEL",
+    "NCCL_PXN_DISABLE",
+    "NCCL_CUMEM_HOST_ENABLE",
+    "NCCL_SOCKET_NTHREADS",
+    "NCCL_NSOCKS_PERTHREAD",
+):
+    value = os.environ.get(name)
     if value:
         env_vars[name] = value
 

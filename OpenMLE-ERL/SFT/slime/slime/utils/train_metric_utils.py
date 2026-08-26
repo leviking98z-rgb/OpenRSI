@@ -24,9 +24,20 @@ def get_memory_stats():
                 "gpu_free_gb": round(free / (1024**3), 2),
                 "gpu_total_gb": round(total / (1024**3), 2),
                 "gpu_used_gb": round((total - free) / (1024**3), 2),
-                "gpu_utilization": round((total - free) / total * 100, 2),
+                "gpu_memory_utilization": round(
+                    (total - free) / total * 100, 2
+                ),
             }
         )
+        # torch.cuda.utilization() is backed by NVML and reports actual device
+        # utilization. Keep it best-effort because stripped-down test/runtime
+        # environments may not ship the NVML Python dependency.
+        try:
+            memory_stats["gpu_utilization"] = round(
+                float(torch.cuda.utilization(device)), 2
+            )
+        except Exception:
+            pass
 
     # CPU memory stats
     mem = psutil.virtual_memory()

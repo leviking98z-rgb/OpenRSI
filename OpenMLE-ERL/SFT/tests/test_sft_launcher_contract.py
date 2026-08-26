@@ -14,6 +14,7 @@ MEGATRON_MODEL = (
     SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
 )
 ASYNC_TRAIN = SFT_ROOT / "slime/train_async.py"
+TRAIN_METRICS = SFT_ROOT / "slime/slime/utils/train_metric_utils.py"
 
 
 def test_launchers_have_valid_bash_syntax() -> None:
@@ -63,6 +64,29 @@ def test_external_ray_propagates_persistent_compiler_controls() -> None:
             f'"{variable}":' in common_source
         )
     assert "configure_torchinductor_from_env()" in actor_source
+
+
+def test_performance_and_checkpoint_controls_are_explicit() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    for variable in (
+        "ASYNC_SAVE",
+        "SLIME_DISABLE_SAVE",
+        "OVERLAP_GRAD_REDUCE",
+        "OVERLAP_PARAM_GATHER",
+    ):
+        assert f'{variable}="${{{variable}:-0}}"' in source
+    assert "CKPT_ARGS+=(--async-save)" in source
+    assert "PERF_ARGS+=(--overlap-grad-reduce)" in source
+    assert "PERF_ARGS+=(--overlap-param-gather)" in source
+    assert '"SLIME_DISABLE_SAVE": sys.argv[13]' in source
+    assert '"NCCL_IB_HCA"' in source
+    assert '"NCCL_NET_GDR_LEVEL"' in source
+
+
+def test_gpu_utilization_is_not_vram_occupancy() -> None:
+    source = TRAIN_METRICS.read_text(encoding="utf-8")
+    assert '"gpu_memory_utilization"' in source
+    assert "torch.cuda.utilization(device)" in source
 
 
 def test_async_checkpoint_precedes_next_dataset_prefetch() -> None:
