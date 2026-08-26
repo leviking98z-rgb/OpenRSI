@@ -362,7 +362,10 @@ export SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE=0
 This selects a generated pointwise configuration without runtime benchmarking;
 it can trade a small amount of kernel performance for a reliable cold start
 but does not change the model, data, loss, or optimizer configuration. Leave
-the variable unset for the PyTorch default.
+the variable unset for the PyTorch default. Keep this setting identical across
+uninterrupted and resumed runs when testing bitwise continuity: selecting a
+different generated kernel can change floating-point reduction order even
+when the mathematical training configuration is unchanged.
 
 ## Output and resume behavior
 
