@@ -279,9 +279,16 @@ export LR=3e-5
 export GLOBAL_BATCH_SIZE=128
 export ROLLOUT_BATCH_SIZE=128
 export ROLLOUT_MAX_CONTEXT_LEN=32768
+export LOG_PROBS_CHUNK_SIZE=4096
 export ACTOR_NUM_NODES=1
 export ACTOR_NUM_GPUS_PER_NODE=8
 ```
+
+`LOG_PROBS_CHUNK_SIZE` is optional and disabled by default. A positive value
+chunks the sequence axis of the vocabulary-parallel log-probability
+calculation without dropping tokens. This bounds the transient FP32
+cross-entropy buffer for long 32k examples on GPUs with less peak memory than
+the H200 paper configuration.
 
 When validating outside the pinned SLIME image, a host PyTorch build may spawn too many Inductor workers while compiling the first MoE step. If the GPUs are idle and many `torch._inductor.compile_worker` processes appear, set `TORCHINDUCTOR_COMPILE_THREADS=1`. The launcher forwards this setting to Ray workers only when it is explicitly set; the default training configuration is otherwise unchanged.
 

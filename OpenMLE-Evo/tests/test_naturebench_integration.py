@@ -133,6 +133,43 @@ def test_naturebench_build_tasks_writes_airaevo_config(tmp_path):
     assert task_cfg["candidate_preflight_imports"] is True
 
 
+def test_naturebench_build_tasks_expands_per_task_image_template(tmp_path):
+    build_tasks = _load_module(
+        "naturebench_build_tasks_image_template",
+        REPO_ROOT
+        / "third_party"
+        / "aira-evo"
+        / "examples"
+        / "nature_bench"
+        / "build_tasks.py",
+    )
+    naturebench_root = tmp_path / "NatureBench"
+    _write_fake_naturebench_task(naturebench_root)
+    build_cfg_path = tmp_path / "build.yaml"
+    build_cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "data": {
+                    "naturebench_root": str(naturebench_root),
+                    "task_list": ["fake-nature-task"],
+                    "execution_mode": "docker",
+                    "docker_image": "fallback:v3",
+                    "docker_image_template": "openrsi-{task_name}:v3",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output_root = tmp_path / "airaevo_tasks"
+    build_tasks.build_tasks(build_cfg_path, output_root=output_root)
+
+    task_cfg = yaml.safe_load(
+        (output_root / "fake-nature-task" / "config.yaml").read_text(encoding="utf-8")
+    )
+    assert task_cfg["docker_image"] == "openrsi-fake-nature-task:v3"
+
+
 def test_naturebench_build_tasks_extracts_empirical_eda_addendum(tmp_path):
     build_tasks = _load_module(
         "naturebench_build_tasks_eda",
@@ -1414,6 +1451,7 @@ def test_evaluate_naturebench_payloads_point_to_naturebench_builder_and_runner(
                 "eval_service_url": "http://127.0.0.1:8321",
                 "execution_mode": "scm_docker",
                 "batch_name": "unit-batch",
+                "docker_image_template": "openrsi-{task_name}:v3",
                 "submit_repeats": 0,
                 "scm_host": "scm-primary",
                 "scm_workspace_root": "/remote/workspaces/unit",
@@ -1444,6 +1482,10 @@ def test_evaluate_naturebench_payloads_point_to_naturebench_builder_and_runner(
     assert prepare_payload["data"]["naturebench_root"] == "/tmp/NatureBench"
     assert prepare_payload["data"]["task_list"] == ["fake-nature-task"]
     assert prepare_payload["data"]["execution_mode"] == "scm_docker"
+    assert (
+        prepare_payload["data"]["docker_image_template"]
+        == "openrsi-{task_name}:v3"
+    )
     assert prepare_payload["data"]["submit_repeats"] == 0
     assert prepare_payload["data"]["scm_host"] == "scm-primary"
     assert prepare_payload["data"]["scm_workspace_root"] == "/remote/workspaces/unit"

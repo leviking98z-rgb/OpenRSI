@@ -417,6 +417,11 @@ def build_tasks(config_path: Path, output_root: Path | None = None) -> None:
             ),
         )
         visible_data_analysis = _visible_data_analysis_for_task(data_cfg, task_name)
+        docker_image = data_cfg.get("docker_image")
+        docker_image_template = data_cfg.get("docker_image_template")
+        if docker_image_template:
+            docker_image = str(docker_image_template).format(task_name=task_name)
+
         task_payload = {
             "benchmark": "naturebench",
             "uuid": task_name,
@@ -437,7 +442,7 @@ def build_tasks(config_path: Path, output_root: Path | None = None) -> None:
             ),
             "batch_name": str(data_cfg.get("batch_name", "airaevo-naturebench")),
             "workspace_root": data_cfg.get("workspace_root"),
-            "docker_image": data_cfg.get("docker_image"),
+            "docker_image": docker_image,
             "local_python": data_cfg.get("local_python"),
             "local_conda_env": data_cfg.get("local_conda_env"),
             "local_conda_executable": data_cfg.get("local_conda_executable"),

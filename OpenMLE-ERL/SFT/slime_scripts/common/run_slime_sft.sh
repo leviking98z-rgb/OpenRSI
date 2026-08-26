@@ -19,6 +19,7 @@ ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-128}"
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
 ROLLOUT_MAX_CONTEXT_LEN="${ROLLOUT_MAX_CONTEXT_LEN:-32768}"
 MAX_TOKENS_PER_GPU="${MAX_TOKENS_PER_GPU:-32768}"
+LOG_PROBS_CHUNK_SIZE="${LOG_PROBS_CHUNK_SIZE:--1}"
 MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-1}"
 LOSS_MASK_TYPE="${LOSS_MASK_TYPE:-qwen3}"
 QKV_FORMAT="${QKV_FORMAT:-}"
@@ -209,6 +210,9 @@ if [[ "${USE_DYNAMIC_BATCH_SIZE}" == "1" ]]; then
   PERF_ARGS+=(--use-dynamic-batch-size --max-tokens-per-gpu "${MAX_TOKENS_PER_GPU}")
 else
   PERF_ARGS+=(--micro-batch-size "${MICRO_BATCH_SIZE}")
+fi
+if (( LOG_PROBS_CHUNK_SIZE > 0 )); then
+  PERF_ARGS+=(--log-probs-chunk-size "${LOG_PROBS_CHUNK_SIZE}")
 fi
 if [[ "${USE_SEQUENCE_PARALLEL}" == "1" ]]; then
   PERF_ARGS+=(--sequence-parallel)

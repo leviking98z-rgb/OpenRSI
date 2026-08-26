@@ -123,6 +123,7 @@ def _build_payloads(
             "execution_mode": str(_data_value(cfg, "execution_mode", "docker")),
             "workspace_root": _data_value(cfg, "workspace_root"),
             "docker_image": _data_value(cfg, "docker_image"),
+            "docker_image_template": _data_value(cfg, "docker_image_template"),
             "gpu_devices": _data_value(cfg, "gpu_devices"),
             "local_python": _data_value(cfg, "local_python"),
             "local_conda_env": _data_value(cfg, "local_conda_env"),

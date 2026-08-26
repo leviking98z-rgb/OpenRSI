@@ -53,6 +53,22 @@ NATUREBENCH_CONFIG_NAME=experiment/naturebench_smoke \
 
 In this mode the task execution backend is `docker`; the AIRA-Evo search scheduler defaults to synchronous `generation`.
 
+For a local ten-task deployment in which each task has its own image, set the
+data and evaluator roots and use the lane configuration:
+
+```bash
+export NATUREBENCH_DATA_ROOT="<NATUREBENCH_DATA_ROOT>"
+export NATUREBENCH_EVAL_SERVICE_URL="http://127.0.0.1:8321"
+export NATUREBENCH_GPU_DEVICES="0"
+
+python scripts/evaluate_naturebench.py \
+  --config-name experiment/naturebench_local_lite_v2
+```
+
+The default image template is
+`openrsi-naturebench-{task_name}:v3`. Override
+`data.docker_image_template` when local image names differ.
+
 ## 4. SCM Smoke
 
 ```bash
