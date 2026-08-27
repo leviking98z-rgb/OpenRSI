@@ -1,3 +1,5 @@
+import logging
+import os
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -5,6 +7,19 @@ from collections.abc import Callable, Iterable
 import torch
 
 _SourceGetter = Callable[[], Iterable[tuple[str, torch.Tensor]]]
+logger = logging.getLogger(__name__)
+
+
+def _pin_memory_enabled() -> bool:
+    value = os.environ.get("SLIME_TENSOR_BACKUP_PIN_MEMORY", "1").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        "SLIME_TENSOR_BACKUP_PIN_MEMORY must be a boolean value, "
+        f"got {value!r}"
+    )
 
 
 class TensorBackuper(ABC):
@@ -54,9 +69,29 @@ class _TensorBackuperNormal(TensorBackuper):
     @torch.no_grad()
     def backup(self, tag: str) -> None:
         backup_dict = self._backups[tag]
+        pin_memory = _pin_memory_enabled()
         for name, param in self._source_getter():
             if name not in backup_dict:
-                backup_dict[name] = torch.empty_like(param, device=torch.device("cpu"), pin_memory=True)
+                try:
+                    backup_dict[name] = torch.empty_like(
+                        param,
+                        device=torch.device("cpu"),
+                        pin_memory=pin_memory,
+                    )
+                except RuntimeError as exc:
+                    if not pin_memory:
+                        raise
+                    logger.warning(
+                        "Pinned CPU allocation failed for tensor %s; "
+                        "falling back to pageable memory: %s",
+                        name,
+                        exc,
+                    )
+                    backup_dict[name] = torch.empty_like(
+                        param,
+                        device=torch.device("cpu"),
+                        pin_memory=False,
+                    )
             backup_dict[name].copy_(param.detach(), non_blocking=True)
         torch.cuda.synchronize()
 
