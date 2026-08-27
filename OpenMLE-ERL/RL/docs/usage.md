@@ -148,6 +148,31 @@ different times; increase this timeout only as a guard against that
 initialization skew. Staging the checkpoint on node-local storage is still the
 preferred performance fix.
 
+For bounded single-node synchronous runs on the pinned SLIME commit,
+`OPENRSI_DEFER_FINAL_CHECKPOINT=1` enables an exact-source-checked runtime
+patch for a terminal `torch_memory_saver` failure. It evaluates first, offloads
+the rollout engine, writes the final actor and dataset-cursor checkpoints
+synchronously, and leaves the actor resident until process exit instead of
+performing a redundant second pinned-host backup. The launcher default is `0`,
+and the patch installer fails closed if the SLIME source does not match the
+validated commit. `SLIME_TENSOR_BACKUP_PIN_MEMORY=0` controls the separate
+OpenRSI `TensorBackuper` allocation and can be used together with this option.
+
+If the full actor checkpoint completed but the process exited before SLIME
+wrote its small global-dataset cursor, reconstruct that cursor only after
+verifying the completed rollout count and dataset geometry:
+
+```bash
+python3 examples/openmle_rl/scripts/advance_rollout_cursor.py \
+  --input /checkpoint/rollout/global_dataset_state_dict_0.pt \
+  --output /checkpoint/rollout/global_dataset_state_dict_1.pt \
+  --dataset-size 2 \
+  --rollout-batch-size 2 \
+  --samples-per-prompt 4
+```
+
+The utility writes atomically and refuses to overwrite an existing cursor.
+
 ## Execution semantics
 
 For each sample:
