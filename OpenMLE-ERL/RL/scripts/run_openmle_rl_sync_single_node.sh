@@ -66,6 +66,11 @@ if [ "${SAVE_INTERVAL}" != "10" ]; then
     echo "OpenMLE RL requires SAVE_INTERVAL=10, got ${SAVE_INTERVAL}" >&2
     exit 1
 fi
+DISTRIBUTED_TIMEOUT_MINUTES="${DISTRIBUTED_TIMEOUT_MINUTES:-10}"
+if [[ ! "${DISTRIBUTED_TIMEOUT_MINUTES}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "DISTRIBUTED_TIMEOUT_MINUTES must be a positive integer, got ${DISTRIBUTED_TIMEOUT_MINUTES}" >&2
+    exit 1
+fi
 RESUME_MODEL_PATH="${RESUME_MODEL_PATH-}"
 RESUME_CKPT_STEP="${RESUME_CKPT_STEP-}"
 REF_CKPT_STEP="${REF_CKPT_STEP-}"
@@ -435,6 +440,7 @@ fi
 
 # Sync parallel defaults aligned with run_qwen3-30BA3B-thinking_mle_ops_8gpu.sh.
 PERF_ARGS=(
+   --distributed-timeout-minutes "${DISTRIBUTED_TIMEOUT_MINUTES}"
    --tensor-model-parallel-size "${TENSOR_MODEL_PARALLEL_SIZE:-2}"
    --sequence-parallel
    --pipeline-model-parallel-size "${PIPELINE_MODEL_PARALLEL_SIZE:-1}"

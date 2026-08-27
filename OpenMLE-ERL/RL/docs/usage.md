@@ -141,6 +141,13 @@ Use the matching script and template for the other three modes. Launchers do not
 
 Resume is disabled by default. Set `RESUME_MODEL_PATH` and `RESUME_CKPT_STEP` together. Set `MANUAL_DB_PATH` when continuing a Program Database. Keep `LOAD_OPTIMIZER=0` and `LOAD_RNG=0` for SFT-to-RL starts or cross-topology weight-only loading; use `1/1` only when the checkpoint and current parallel topology are compatible.
 
+The single-node synchronous launcher also accepts
+`DISTRIBUTED_TIMEOUT_MINUTES` (default `10`). Large full-state checkpoints on
+network filesystems can make ranks reach checkpoint-planning collectives at
+different times; increase this timeout only as a guard against that
+initialization skew. Staging the checkpoint on node-local storage is still the
+preferred performance fix.
+
 ## Execution semantics
 
 For each sample:
