@@ -1,0 +1,559 @@
+# MA1 SFT-Only 代际自举 Roadmap
+
+> 状态：核心实验方案
+> 目标：在不改动 OpenMLE-Gym 和 OpenMLE-Evo harness 的前提下，验证一条低成本的
+> `Evo experience -> distillation -> SFT -> model promotion` 权重更新链路，是否能提高整个系统的性能。
+
+## 1. 边界与核心假设
+
+本阶段固定以下两层：
+
+- **OpenMLE-Gym 不变**：继续提供任务、沙箱和可执行评价。
+- **OpenMLE-Evo 不变**：继续负责 Draft、Improve、Debug、程序执行和候选选择。
+
+本阶段只改变 **OpenMLE-ERL 的模型更新方式**：
+
+```text
+原始方式：
+Gym -> Evo rollout -> RL/GSPO -> MA1
+
+当前原型：
+Gym -> Evo search -> verified experience -> continued SFT
+     -> candidate MA1 -> promotion -> next generation
+```
+
+第一版明确不做：
+
+- 在线 RL 或 GSPO；
+- harness、reward 或 evaluator 自修改；
+- Crossover、多岛种群和长搜索树；
+- 多个候选模型并行演化；
+- 搜索期间在线同步权重。
+
+要验证的首要假设是：
+
+```text
+在相同 Gym、Evo、任务、随机种子和执行预算下：
+
+G1 + Evo@B > G0 + Evo@B
+```
+
+其中 `G0` 是当前 MA1，`G1` 是由 G0 的 Evo 经验继续 SFT 得到的候选模型，
+`B` 是每个任务固定的程序执行预算。
+
+## 2. 顶层闭环
+
+```text
+                    generation t
+
+             current MA1 checkpoint Gt
+                         |
+                    freeze weights
+                         |
+                         v
+        lightweight Evo search on Search-Train tasks
+                         |
+                         v
+       executable programs + scores + feedback + lineage
+                         |
+                         v
+             selection and SFT distillation
+                         |
+                         v
+                offline continued SFT
+                         |
+                         v
+                 candidate G(t+1)
+                         |
+                         v
+       held-out promotion evaluation against Gt
+                  /                   \
+              accept                 reject
+                |                       |
+                v                       v
+             G(t+1)                    Gt
+```
+
+这里有两种“晋升”：
+
+1. **程序层晋升**：Evo 中更好的 child program 替换 parent program。
+2. **模型层晋升**：由这些成功修改训练出的 candidate checkpoint，通过 held-out
+   验证后替换 parent checkpoint。
+
+第一阶段只跑一代：
+
+```text
+G0 -> search -> distill -> SFT -> G1
+```
+
+只有一代链路通过核心验证后，才进入：
+
+```text
+G1 -> fresh search tasks -> distill -> SFT -> G2
+```
+
+一代实验只能证明闭环有效；`G2 > G1 > G0` 才提供更强的递归自举证据。
+
+## 3. 一代中的模块职责
+
+### 3.1 Evo：冻结模型后的经验制造器
+
+每代收集数据期间冻结 `Gt`。Evo 使用一个固定的小预算 profile，例如：
+
+```text
+2 x Draft
+2 x Improve or Debug
+```
+
+具体预算可根据成本调整，但同一实验内必须固定。原型只保留：
+
+```text
+Draft -> Execute -> select best
+                   -> Improve when valid
+                   -> Debug when invalid
+                   -> Execute
+```
+
+此阶段的重点不是重现完整长程搜索，而是用少量执行找到比直接生成更好的、可验证的监督信号。
+
+### 3.2 复用现有 Evo-to-SFT 数据链路
+
+OpenRSI 原本的 SFT 就包含 Evo 产生的轨迹数据，因此这里不需要重新发明一套
+“Evo-to-SFT bridge”。发布代码已经提供：
+
+```text
+run_evolutionary_rollout.sh
+  -> program_ep_0/<task>/stat.json 和逐 step artifacts
+  -> select_evolutionary.py 选择有效轨迹 step
+  -> messages 数据
+  -> finalize_messages.py 去重和 token filter
+  -> SLIME SFT
+```
+
+原始 SFT 数据由两部分组成：
+
+- parallel rollout 产生的 full responses；
+- evolutionary rollout 产生的 trajectory steps。
+
+因此核心实验的默认做法是复用原有 operator-conditioned 样本语义，只把经验生成模型
+从原始 teacher/rollout model 换成当前冻结的 `Gt`，并增加 generation、checkpoint、
+task split 和 parent-child lineage 标记。
+
+现有 evolutionary selector 会按 Draft、Improve、Crossover 及其 Debug descendants
+恢复 segment，并使用执行分数、parent 比较、medal gate 和 causal-inheritance
+annotation 选择训练 step。每个被选 step 原本的 system/user prompt 与 assistant
+response 可直接构成 SFT 对。
+
+发布代码中的 selector 主要输出 `selected_steps.jsonl` manifest。如果实际训练入口
+尚不能直接读取该 manifest，只需补一个很薄的 materialization adapter，把已有逐 step
+prompt/response artifacts 写成 `{id, messages}`。这是工程接线，不是新的算法模块。
+
+第一版优先保留以下已有监督形式。
+
+#### A. 成功局部修改
+
+```text
+input:
+  task + parent program + execution feedback
+
+target:
+  better child program
+```
+
+仅保留：
+
+- Improve：child 的可执行得分严格优于 parent；
+- Debug：invalid parent 被修改成 valid child；
+- evaluator 方向、分数和有效性都能被可靠解释的样本。
+
+#### B. 最佳终点重新蒸馏为 Draft（可选增强）
+
+```text
+input:
+  original task
+
+target:
+  best verified program found by the search
+```
+
+这可以把“依赖数步搜索才获得的最终程序”压缩为模型的一次 Draft 能力，但它不是打通
+闭环所必需的。为减少首个核心实验的变量，先复用原始 trajectory-step 配方；待基线
+闭环有效后，再把 endpoint-as-Draft 作为独立消融。
+
+不要把 Improve/Debug 中依赖 parent 的原始 reasoning 直接配给 Draft prompt。不同
+operator 的输入语义必须一致；必要时只使用最终代码，或重新构造与 Draft 输入一致的
+响应。
+
+### 3.3 Continued SFT：把搜索收益压入权重
+
+第一版采用离线 continued SFT：
+
+```text
+anchor SFT replay + newly distilled Evo experience -> candidate G1
+```
+
+初始可使用以下数据混合范围：
+
+```text
+60-70%  原始 anchor/replay SFT
+30-40%  新的 Evo 蒸馏数据
+```
+
+该比例是起点，不是结论。anchor replay 用于降低遗忘；新经验比例根据 held-out
+operator eval 和 promotion eval 调整。
+
+### 3.4 Promotion gate：决定是否替换父模型
+
+candidate 不因训练完成而自动晋升。必须在从未参与搜索数据生成和 SFT 的
+Promotion Set 上，与 parent 使用完全相同的推理和搜索预算进行比较。
+
+最小晋升条件：
+
+```text
+1. fixed-budget Evo 主指标提高；
+2. task-level wins > losses；
+3. 程序有效率和 anchor 能力没有超过预设容差的退化。
+```
+
+若不满足，保留 parent，并把失败归因到数据、训练或 operator/search 匹配问题，
+而不是继续无条件滚动到下一代。
+
+## 4. 数据隔离
+
+至少划分三部分：
+
+```text
+Search-Train
+  运行 G0 + Evo，生成本代 SFT 数据
+
+Promotion
+  选择 checkpoint 和执行模型晋升，永不用于训练
+
+Final Test
+  方案冻结后只运行一次，用于最终结论
+```
+
+必须按完整 task 划分；如果多个任务共享同一 Kaggle competition、dataset 或高度
+相似的数据源，还应按 competition/dataset family 成组隔离，而不是按数据行随机切分。
+
+建议的核心实验规模：
+
+```text
+Search-Train:  30-50 tasks
+Promotion:      8-10 tasks
+Final Test:    15-20 tasks
+```
+
+在正式核心实验前可以使用更小的 smoke split 检查链路，但不能用 smoke 结果支持性能结论。
+
+每一代还必须：
+
+- 使用新的 Search-Train task shard；
+- 为每个 task/model/seed 清空 Program DB 和搜索状态；
+- 禁止把历史 best program、搜索树或 execution feedback 带进 held-out eval；
+- 保存 task split、数据样本和 checkpoint 的可追踪 manifest。
+
+## 5. 小核心 Eval
+
+### 5.1 比较组
+
+最低成本版本：
+
+```text
+A. G0
+B. G1 = G0 + Evo-distilled SFT
+```
+
+推荐加入一个 matched-compute 对照：
+
+```text
+C. G0-SFT-Control
+   使用原始/replay SFT 数据继续训练，
+   与 G1 匹配训练 token 数、update 数和主要超参数
+```
+
+三组分别回答：
+
+```text
+G1 > G0
+  新增权重更新链路是否带来系统提升？
+
+G1 > G0-SFT-Control
+  提升是否来自 Evo 验证经验，而不只是“多做了一轮 SFT”？
+```
+
+### 5.2 Eval 1：Direct / first-candidate eval
+
+在 held-out tasks 上比较相同采样配置下的第一个候选：
+
+```text
+G0 direct@1
+G0-SFT-Control direct@1
+G1 direct@1
+```
+
+记录：
+
+- valid program rate；
+- normalized task score；
+- task-level win/tie/loss。
+
+该测试回答：搜索经验是否已经被压缩成模型自身的一次生成能力。
+
+### 5.3 Eval 2：固定状态的 operator eval
+
+从 held-out tasks 固定一批：
+
+```text
+task + parent program + execution feedback
+```
+
+把完全相同的状态分别交给各模型生成一次 child，记录：
+
+- Improve child 严格优于 parent 的比例；
+- Debug 从 invalid 变成 valid 的比例；
+- child valid rate；
+- child 相对 parent 的 normalized score delta。
+
+这是一个低成本的机制验证：它直接检查 MA1 在 Evo 内负责的局部修改能力是否提高。
+
+### 5.4 Eval 3：端到端 fixed-budget Evo eval
+
+把模型重新接回同一个 Evo harness：
+
+```text
+G0              + Evo@B
+G0-SFT-Control  + Evo@B
+G1              + Evo@B
+```
+
+所有组固定：
+
+- task 集合；
+- Evo 代码和配置；
+- prompt/template；
+- sampling 参数；
+- seed 集合；
+- 每个任务的程序执行预算 `B`；
+- evaluator、sandbox 和超时策略；
+- 初始为空的 Program DB。
+
+主指标：
+
+```text
+best normalized score @ fixed execution budget B
+```
+
+稳健配套指标：
+
+- per-task paired score delta；
+- task-level win/tie/loss；
+- median normalized score；
+- valid program rate；
+- best-so-far score at each execution；
+- search-curve AUC，即同等预算内的整体搜索效率。
+
+不同 Kaggle 任务的原始 metric 尺度和方向可能不同，不能直接平均 raw score。优先使用
+Gym 的统一 normalized score；若某类任务不能可靠归一化，则以 task-level
+win/tie/loss 和任务内 paired delta 为主。
+
+### 5.5 随机性与统计报告
+
+推荐每个 held-out task 使用 3 个配对 seeds；成本极紧时，优先保留更多 task，而不是
+在极少 task 上堆很多 seeds。
+
+最终至少报告：
+
+```text
+mean and median paired delta
+win / tie / loss
+95% paired bootstrap confidence interval
+score-vs-execution curve
+```
+
+tie 的容差应在看结果前，根据 evaluator 精度预先确定。
+
+### 5.6 核心成功判据
+
+**系统性能证据：**
+
+```text
+G1 + Evo@B > G0 + Evo@B
+```
+
+**链路归因证据：**
+
+```text
+G1 + Evo@B > G0-SFT-Control + Evo@B
+```
+
+**权重吸收证据：**
+
+```text
+G1 direct@1 > G0 direct@1
+and/or
+G1 has higher Improve/Debug success than G0
+```
+
+不同结果应作不同解释：
+
+| 观察 | 解释 |
+| --- | --- |
+| direct@1 和 Evo@B 都提高 | 搜索经验进入权重，并转化为系统收益 |
+| direct@1 提高，Evo@B 不提高 | 模型变强，但当前搜索策略没有利用该提升 |
+| direct@1 不变，operator 与 Evo@B 提高 | 主要增强了 Improve/Debug，而非初始 Draft |
+| operator 提高，Evo@B 不提高 | parent selection、预算分配或 operator mix 可能不匹配 |
+| 所有指标不提高 | 优先检查蒸馏格式、数据质量和训练设置 |
+
+## 6. 优化路线
+
+优化顺序遵循“先证明正确，再提高效率”，避免同时改变多个变量。
+
+### Phase O1：提高单位执行的数据质量
+
+- 只保留可执行验证且方向明确的 improvement；
+- 设置最小 score delta，过滤 evaluator noise；
+- 每个 task 限制相似样本数量，避免少数任务主导训练；
+- 对代码和 message 做 exact/near-duplicate 去重；
+- 分开统计 Draft、Improve、Debug 的样本数、成功率和 token 成本；
+- 保留 parent、child、feedback、score 和 lineage，确保每条样本可审计。
+
+### Phase O2：提高 SFT 的学习效率
+
+- 先使用单一 candidate 和离线批量 SFT；
+- G1 与 control 匹配训练 token/update budget；
+- 使用 anchor replay 控制遗忘；
+- 根据 held-out operator 指标调整 Draft/Improve/Debug 的采样权重；
+- 通过 Promotion Set 选择 checkpoint，不在 Final Test 上挑 checkpoint；
+- 若 full-parameter SFT 成本仍过高，再单独比较参数高效微调，不能在主实验中混淆变量。
+
+### Phase O3：提高搜索效率
+
+只有核心链路有效后再尝试：
+
+- 在固定最大预算下优先扩展 best parent；
+- 根据 valid/invalid 状态选择 Improve 或 Debug；
+- 删除持续无收益的分支；
+- 以“合格训练样本数 / program execution”和“最终分数 / execution”作为效率指标；
+- 最后才考虑 adaptive budget、更深搜索或重新启用 Crossover。
+
+优化后的版本仍需与原始 fixed-budget profile 做隔离对照，防止把搜索预算变化误认为
+模型权重提升。
+
+## 7. 分阶段交付
+
+### Phase 0：冻结实验协议
+
+交付：
+
+- task-family level 的 Train/Promotion/Test manifests；
+- 固定 Evo profile、sampling config、seed 和 execution budget；
+- G0 baseline 的 direct、operator 和 Evo@B 结果；
+- evaluator 重复性与失败处理规则。
+
+退出条件：同一模型重复运行的波动足够小，可以识别预期提升。
+
+### Phase 1：复用并验证现有 Evo-to-SFT 数据链路
+
+交付：
+
+- 验证 `Evo artifacts -> selected steps -> messages -> final SFT data` 的现有路径；
+- 复用 validity、parent-improvement、medal、dedup 和 token-length filters；
+- 为每条训练样本补充 generation、parent checkpoint、task split 和 lineage；
+- 若公开入口停在 `selected_steps.jsonl`，补充最薄的 messages materialization adapter；
+- 数据统计和少量人工抽检报告。
+
+退出条件：随机抽样的训练对在 prompt 语义、代码、反馈和分数方向上均一致。
+
+### Phase 2：训练一代 candidate
+
+交付：
+
+- G1 checkpoint；
+- matched-token G0-SFT-Control checkpoint；
+- 完整训练配置、数据版本和 parent checkpoint 记录。
+
+退出条件：训练稳定完成，且基础 anchor eval 无明显灾难性退化。
+
+### Phase 3：运行小核心 Eval
+
+按顺序运行：
+
+```text
+direct@1
+-> fixed-state operator eval
+-> fixed-budget Evo@B on Promotion
+-> promotion decision
+-> one-shot Final Test
+```
+
+退出条件：G1 在 Final Test 的 Evo@B 主指标优于 G0；若有 control，G1 还应显示出
+相对 matched-compute continued SFT 的增益。
+
+### Phase 4：消融与效率优化
+
+在核心链路通过后，再比较：
+
+```text
+endpoint-only
+transition-only
+endpoint + transition
+with / without anchor replay
+different strict-improvement thresholds
+```
+
+目标是找到最少搜索执行、最少训练 token 下仍能稳定产生增益的数据配方。
+
+### Phase 5：第二代递归验证
+
+使用全新的 Search-Train shard：
+
+```text
+G1 -> Evo experience -> SFT -> G2
+```
+
+除了检查 `G2 > G1`，还要比较 G0 和 G1 的经验生产效率：
+
+- fixed budget 下找到的 best program；
+- valid program rate；
+- successful Improve/Debug rate；
+- 每个 execution 产生的合格 SFT 样本数；
+- 达到同一质量阈值所需的执行次数。
+
+更强的递归信号不是单纯“又训练了一轮”，而是：
+
+```text
+G1 比 G0 更擅长制造高质量经验，
+并且这些经验能够训练出 G2 > G1。
+```
+
+## 8. 实验记录与可复现性
+
+每一代保存一个 lineage manifest，至少包含：
+
+```text
+parent checkpoint
+task split and task-family hash
+Evo code/config hash
+sampling parameters and seeds
+raw artifact locations
+distillation/filter version
+selected sample IDs
+SFT config and data mixture
+candidate checkpoint
+promotion and final-test results
+```
+
+因此系统中的因果变量始终清晰：
+
+```text
+Gym: fixed
+Evo harness: fixed
+ERL update path: changed
+MA1 checkpoint: G0 -> G1
+```
+
+这个 roadmap 的第一里程碑不是宣称完整 RSI，而是以最小成本证明：
+
+> Evo 产生的执行验证经验，可以通过 SFT 被吸收到 MA1 权重中，并在未见任务、
+> 相同搜索预算下提高整个系统的性能。

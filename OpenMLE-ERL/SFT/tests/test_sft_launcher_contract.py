@@ -3,16 +3,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 SFT_ROOT = Path(__file__).resolve().parents[1]
 COMMON = SFT_ROOT / "slime_scripts/common/run_slime_sft.sh"
 RAY_NODE = SFT_ROOT / "slime_scripts/common/start_external_ray_node.sh"
-MEGATRON_ACTOR = (
-    SFT_ROOT / "slime/slime/backends/megatron_utils/actor.py"
-)
-MEGATRON_MODEL = (
-    SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
-)
+MEGATRON_ACTOR = SFT_ROOT / "slime/slime/backends/megatron_utils/actor.py"
+MEGATRON_MODEL = SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
 ASYNC_TRAIN = SFT_ROOT / "slime/train_async.py"
 TRAIN_METRICS = SFT_ROOT / "slime/slime/utils/train_metric_utils.py"
 
@@ -38,6 +33,14 @@ def test_complete_checkpoint_and_resume_controls_are_explicit() -> None:
     assert "CKPT_ARGS+=(--no-save-rng)" in source
     assert "CKPT_ARGS+=(--use-checkpoint-opt_param-scheduler)" in source
     assert "global_dataset_state_dict_${LOAD_ITERATION}.pt" in source
+
+
+def test_candidate_and_control_training_seeds_are_explicit() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    assert 'TRAINING_SEED="${TRAINING_SEED:-20260829}"' in source
+    assert 'ROLLOUT_SEED="${ROLLOUT_SEED:-20260829}"' in source
+    assert '--seed "${TRAINING_SEED}"' in source
+    assert '--rollout-seed "${ROLLOUT_SEED}"' in source
 
 
 def test_external_ray_contract_is_scheduler_neutral() -> None:

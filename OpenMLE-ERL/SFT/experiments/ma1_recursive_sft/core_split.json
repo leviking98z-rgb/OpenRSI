@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "release": {
+    "repo_id": "FrontisAI/OpenMLE-Tasks",
+    "revision": "f56e4b31252a9b81d95fea100098cd49b7290398",
+    "source_manifest_sha256": "4c78706457f5c43b2de63dec1ff3b8b7361786799a4e44445b7536ec3e331aab"
+  },
+  "preflight": {
+    "passed": 32,
+    "failed": 0,
+    "report_sha256": "1256ec8966d58819324e8d1a1579c6ec028d25ee538013766f2ea3b342c06b9c"
+  },
+  "selection_seed": 20260829,
+  "splits": {
+    "search_train": [
+      "stock-pledge-defaults-prediction@1",
+      "climate-change-indicators@1",
+      "delhi-air-quality@1",
+      "increasing-crop-yields-v5@1",
+      "state-of-data-2022@1",
+      "caf-order-transactions-dataset@1",
+      "global-health-data-analysis-1990-2019@1",
+      "chembl22@1",
+      "teomewhy-loyalty-system@2",
+      "zillow-home-value-index@1",
+      "us-election-2020@1",
+      "india-2024-election-dataset-all-candidates@1",
+      "multi-type-network-attack-detection-dataset@1",
+      "used-car-auction-prices@1",
+      "iss-real-time-tracker-10s-interval-dataset@1",
+      "united-states-crime-analysis-19792023@1"
+    ],
+    "promotion": [
+      "online-retails-sale-dataset@2",
+      "stressor-cause-of-mental-health-problem-dataset@1",
+      "electricity-demand-in-victoria-australia@1",
+      "monthly-wholesale-price-index-2004-05-to-mar-2017@1",
+      "edgeiiotset-cyber-security-dataset-of-iot-iiot@1",
+      "anime-recommendation-database-2020@2",
+      "updated-electric-vehicles-spec-2025@1",
+      "shopping@1"
+    ],
+    "final_test": [
+      "covid19-healthy-diet-dataset@1",
+      "amazon-basin-dem@1",
+      "us-mass-shootings-last-50-years@1",
+      "ucl-2025-players-data@1",
+      "dunnhumby-the-complete-journey@2",
+      "nepal-odi-2018-present-ball-by-ball-data@1",
+      "financial-time-series-datasets@1",
+      "ipl-dataset2008-2025@1"
+    ]
+  }
+}

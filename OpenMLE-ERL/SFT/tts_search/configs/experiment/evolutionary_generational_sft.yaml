@@ -1,0 +1,76 @@
+# @package _global_
+# Low-cost, frozen-model Evo profile for one-generation SFT bootstrapping.
+
+defaults:
+  - /sandbox: default
+  - /data: evolutionary
+  - /hydra: default
+  - /litellm: sglang_qwen3_6_35b
+  - /search: evolutionary
+  - _self_
+
+experiment_name: evolutionary_generational_sft
+output_dir: ${oc.env:OPENMLE_OUTPUT_DIR,output/evolutionary_generational_sft}
+seed: ${oc.decode:${oc.env:OPENMLE_SEED,20260829}}
+
+# Four executed candidates are enough to exercise Draft, Improve, and Debug
+# without enabling the expensive population/island regime.
+max_steps: 4
+time_budget: ${oc.decode:${oc.env:OPENMLE_TASK_TIME_BUDGET,3600}}
+model_plus_sandbox_time_budget: ${oc.decode:${oc.env:OPENMLE_TOTAL_TIME_BUDGET,5400}}
+n_samples_per_task: 1
+max_tasks: null
+llm_concurrency: ${oc.decode:${oc.env:OPENMLE_LLM_CONCURRENCY,2}}
+candidates_per_step: ${oc.decode:${oc.env:OPENMLE_CANDIDATES_PER_STEP,1}}
+
+enable_sandbox_eval: true
+evaluate_only: false
+
+# The generational selector applies the strict parent-improvement gate later.
+# At collection time, retain every finite execution result so zero/negative
+# task metrics and failed-to-improve children remain auditable.
+rejection_policy: accept_scored
+rejection_target: 4
+rejection_reference_scores_path: null
+rejection_mixed_leaderboard_target: 4
+rejection_mixed_no_leaderboard_target: 4
+rejection_accepted_medals: []
+rejection_apply_baseline_filters: false
+rejection_baseline_token_limit: 32768
+rejection_baseline_tokenizer_model: null
+rejection_baseline_relative_gap_limit: 0.12
+
+data:
+  leaderboard_dir: ${oc.env:OPENMLE_LEADERBOARD_DIR,null}
+
+sandbox:
+  concurrency: ${oc.decode:${oc.env:OPENMLE_SANDBOX_CONCURRENCY,2}}
+  job_timeout: ${oc.decode:${oc.env:OPENMLE_SANDBOX_JOB_TIMEOUT,1200}}
+  wait_timeout: ${oc.decode:${oc.env:OPENMLE_SANDBOX_WAIT_TIMEOUT,1800}}
+
+search:
+  runner:
+    task_list: []
+    task_concurrency: ${oc.decode:${oc.env:OPENMLE_TASK_CONCURRENCY,2}}
+    strict_resume: false
+    solver:
+      step_limit: ${max_steps}
+      num_generations: 4
+      individuals_per_generation: ${candidates_per_step}
+      num_islands: 1
+      max_island_size: 16
+      crossover_prob: 0.0
+      migration_prob: 0.0
+      initial_temp: 1.0
+      final_temp: 1.0
+      num_generations_till_migration: 999
+      num_generations_till_crossover: 999
+      max_debug_depth: 1
+      max_debug_time: ${oc.decode:${oc.env:OPENMLE_SANDBOX_JOB_TIMEOUT,1200}}
+      # Keep private labels out of the model context. The builder already adds a
+      # public-only schema summary from info/data_description.txt.
+      data_preview: false
+      use_test_score: false
+      use_complexity: false
+      execution_timeout: ${oc.decode:${oc.env:OPENMLE_SANDBOX_JOB_TIMEOUT,1200}}
+      export_search_results: true

@@ -13,6 +13,8 @@ MODEL_SCRIPT_NAME="${MODEL_SCRIPT_NAME:?MODEL_SCRIPT_NAME must be set by the mod
 LOAD_PATH="${LOAD_PATH:-}"
 
 INPUT_KEY="${INPUT_KEY:-messages}"
+TRAINING_SEED="${TRAINING_SEED:-20260829}"
+ROLLOUT_SEED="${ROLLOUT_SEED:-20260829}"
 NUM_EPOCH="${NUM_EPOCH:-3}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-}"
@@ -110,6 +112,12 @@ if [[ "${RAY_CLUSTER_MODE}" != "local" && "${RAY_CLUSTER_MODE}" != "external" ]]
   echo "[ERROR] RAY_CLUSTER_MODE must be local or external, got ${RAY_CLUSTER_MODE}" >&2
   exit 2
 fi
+for seed_name in TRAINING_SEED ROLLOUT_SEED; do
+  if [[ ! "${!seed_name}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] ${seed_name} must be a non-negative integer." >&2
+    exit 2
+  fi
+done
 if [[ -n "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" \
   && "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" != "0" \
   && "${SLIME_TORCHINDUCTOR_AUTOTUNE_POINTWISE}" != "1" ]]; then
@@ -253,6 +261,8 @@ SFT_ARGS=(
   --prompt-data "${DATA_PATH}"
   --input-key "${INPUT_KEY}"
   --rollout-shuffle
+  --seed "${TRAINING_SEED}"
+  --rollout-seed "${ROLLOUT_SEED}"
   --num-epoch "${NUM_EPOCH}"
   --num-rollout "${NUM_ROLLOUT}"
   --rollout-batch-size "${ROLLOUT_BATCH_SIZE}"
