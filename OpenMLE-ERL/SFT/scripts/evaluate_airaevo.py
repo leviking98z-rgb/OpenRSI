@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 TTS_SEARCH_DIR = REPO_ROOT / "tts_search"
 logger = logging.getLogger(__name__)
 
-from tts_search.eval_network import disable_proxy_env
+from tts_search.eval_network import disable_proxy_env  # noqa: E402
 
 
 def _to_plain(value: Any) -> Any:

@@ -50,10 +50,20 @@ sandbox:
 
 search:
   runner:
+    package_root: ${oc.env:OPENMLE_AIRAEVO_PACKAGE_ROOT,third_party/aira-evo}
+    task_root: ${search.runner.package_root}/examples/mle_bench
     task_list: []
     task_concurrency: ${oc.decode:${oc.env:OPENMLE_TASK_CONCURRENCY,2}}
     strict_resume: false
     solver:
+      # Match the packages actually installed in openrsi-sandbox:cpu-v1.
+      available_packages:
+        - numpy
+        - pandas
+        - scikit-learn
+        - scipy
+        - torch
+        - torchvision
       step_limit: ${max_steps}
       num_generations: 4
       individuals_per_generation: ${candidates_per_step}

@@ -1130,7 +1130,8 @@ class Evolutionary(Solver):
                 self.logger.info("Maximum runtime reached, stopping search")
                 break
 
-        return state, self.journal.get_best_node().code
+        best_node = self.journal.get_best_node()
+        return state, best_node.code if best_node is not None else None
 
     def log_journal(self):
         # Get the current best node in the tree.

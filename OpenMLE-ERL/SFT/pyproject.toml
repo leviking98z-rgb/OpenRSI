@@ -18,6 +18,7 @@ rollout = [
     "jax[cuda12]",
     "litellm==1.80.15",
     "omegaconf",
+    "tenacity",
     "treequest[all]==0.3.1",
 ]
 train-qwen3-30b = [

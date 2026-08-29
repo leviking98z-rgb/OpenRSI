@@ -10,6 +10,13 @@ MEGATRON_ACTOR = SFT_ROOT / "slime/slime/backends/megatron_utils/actor.py"
 MEGATRON_MODEL = SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
 ASYNC_TRAIN = SFT_ROOT / "slime/train_async.py"
 TRAIN_METRICS = SFT_ROOT / "slime/slime/utils/train_metric_utils.py"
+GEN_CONFIG = (
+    SFT_ROOT
+    / "tts_search/configs/experiment/evolutionary_generational_sft.yaml"
+)
+AIRAEVO_EVO = (
+    SFT_ROOT / "third_party/aira-evo/src/dojo/solvers/evo/evo.py"
+)
 
 
 def test_launchers_have_valid_bash_syntax() -> None:
@@ -41,6 +48,21 @@ def test_candidate_and_control_training_seeds_are_explicit() -> None:
     assert 'ROLLOUT_SEED="${ROLLOUT_SEED:-20260829}"' in source
     assert '--seed "${TRAINING_SEED}"' in source
     assert '--rollout-seed "${ROLLOUT_SEED}"' in source
+
+
+def test_generational_rollout_uses_the_writable_runtime_and_real_packages() -> None:
+    source = GEN_CONFIG.read_text(encoding="utf-8")
+    assert "OPENMLE_AIRAEVO_PACKAGE_ROOT" in source
+    assert "task_root: ${search.runner.package_root}/examples/mle_bench" in source
+    assert "available_packages:" in source
+    assert "        - scikit-learn" in source
+    assert "        - lightgbm" not in source
+    assert "        - xgboost" not in source
+
+
+def test_airaevo_handles_an_all_invalid_search() -> None:
+    source = AIRAEVO_EVO.read_text(encoding="utf-8")
+    assert "best_node.code if best_node is not None else None" in source
 
 
 def test_external_ray_contract_is_scheduler_neutral() -> None:
