@@ -293,3 +293,47 @@ def test_export_and_task_level_promotion_gate(tmp_path: Path) -> None:
     )
     assert result["decision"] == "accept"
     assert result["comparisons"]["candidate_vs_parent"]["best"]["wins"] == 2
+
+
+def test_promotion_uses_raw_scores_when_reward_is_constant_zero(
+    tmp_path: Path,
+) -> None:
+    def rows(score: float, label: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "task_name": "lower-is-better",
+                "seed": seed,
+                "execution_index": index,
+                "score": score + 0.1 * index,
+                "reward": 0.0,
+                "valid": True,
+                "higher_is_better": False,
+                "theoretical_min": 0.0,
+                "theoretical_max": None,
+                "label": label,
+            }
+            for seed in (1, 2)
+            for index in range(4)
+        ]
+
+    parent = tmp_path / "parent.jsonl"
+    control = tmp_path / "control.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+    write_jsonl(parent, rows(3.0, "parent"))
+    write_jsonl(control, rows(2.0, "control"))
+    write_jsonl(candidate, rows(1.0, "candidate"))
+
+    result = evaluate_promotion(
+        parent_paths=[parent],
+        candidate_paths=[candidate],
+        control_paths=[control],
+        output_dir=tmp_path / "promotion",
+        bootstrap_samples=100,
+    )
+
+    assert result["normalization_by_task"]["lower-is-better"]["mode"] == (
+        "pooled_observed_range"
+    )
+    assert result["comparisons"]["candidate_vs_parent"]["best"]["mean_delta"] > 0
+    assert result["comparisons"]["candidate_vs_control"]["best"]["mean_delta"] > 0
+    assert result["decision"] == "accept"

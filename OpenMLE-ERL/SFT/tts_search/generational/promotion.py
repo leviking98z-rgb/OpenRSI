@@ -18,29 +18,103 @@ def _load(paths: list[Path]) -> list[dict[str, Any]]:
     return rows
 
 
-def _normal(row: dict[str, Any]) -> float:
+def _task_normalizers(
+    groups: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for rows in groups.values():
+        for row in rows:
+            by_task[str(row["task_name"])].append(row)
+
+    normalizers: dict[str, dict[str, Any]] = {}
+    for task, rows in by_task.items():
+        directions = {bool(row.get("higher_is_better", True)) for row in rows}
+        if len(directions) != 1:
+            raise ValueError(f"inconsistent score direction for {task}")
+        higher_is_better = directions.pop()
+        bounds = {
+            (
+                finite_float(row.get("theoretical_min")),
+                finite_float(row.get("theoretical_max")),
+            )
+            for row in rows
+        }
+        complete_bounds = {
+            (lower, upper)
+            for lower, upper in bounds
+            if lower is not None and upper is not None and upper > lower
+        }
+        if complete_bounds:
+            if len(complete_bounds) != 1:
+                raise ValueError(f"inconsistent theoretical bounds for {task}")
+            lower, upper = complete_bounds.pop()
+            normalizers[task] = {
+                "mode": "theoretical_bounds",
+                "higher_is_better": higher_is_better,
+                "lower": lower,
+                "upper": upper,
+            }
+            continue
+
+        valid_scores = [
+            score
+            for row in rows
+            if bool(row.get("valid"))
+            if (score := finite_float(row.get("score"))) is not None
+        ]
+        if not valid_scores:
+            rewards = [
+                reward
+                for row in rows
+                if bool(row.get("valid"))
+                if (reward := finite_float(row.get("reward"))) is not None
+            ]
+            if rewards and all(0.0 <= reward <= 1.0 for reward in rewards):
+                normalizers[task] = {
+                    "mode": "unit_reward",
+                    "higher_is_better": True,
+                    "lower": 0.0,
+                    "upper": 1.0,
+                }
+                continue
+        lower = min(valid_scores) if valid_scores else None
+        upper = max(valid_scores) if valid_scores else None
+        normalizers[task] = {
+            "mode": "pooled_observed_range",
+            "higher_is_better": higher_is_better,
+            "lower": lower,
+            "upper": upper,
+        }
+    return normalizers
+
+
+def _normal(row: dict[str, Any], normalizer: dict[str, Any]) -> float:
     if not bool(row.get("valid")):
         return 0.0
-    reward = finite_float(row.get("reward"))
-    if reward is not None:
-        if 0.0 <= reward <= 1.0:
-            return reward
-        raise ValueError(f"reward outside [0, 1]: {reward}")
     score = finite_float(row.get("score"))
-    lower = finite_float(row.get("theoretical_min"))
-    upper = finite_float(row.get("theoretical_max"))
     if score is None:
+        reward = finite_float(row.get("reward"))
+        if normalizer["mode"] == "unit_reward" and reward is not None:
+            return reward
         return 0.0
+    lower = normalizer["lower"]
+    upper = normalizer["upper"]
+    if lower is None or upper is None:
+        return 0.0
+    if upper == lower:
+        return 1.0
     if lower is not None and upper is not None and upper > lower:
         value = (score - lower) / (upper - lower)
-        if not bool(row.get("higher_is_better", True)):
+        if not bool(normalizer["higher_is_better"]):
             value = 1.0 - value
         return min(1.0, max(0.0, value))
-    raise ValueError("valid row needs a unit reward or finite theoretical bounds")
+    raise ValueError("invalid normalization range")
 
 
 def _task_metrics(
-    rows: list[dict[str, Any]], budget: int
+    rows: list[dict[str, Any]],
+    budget: int,
+    normalizers: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, float]]:
     by_pair: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -51,7 +125,7 @@ def _task_metrics(
         indices = [int(row["execution_index"]) for row in group]
         if len(group) != budget or indices != list(range(budget)):
             raise ValueError(f"{task} does not contain exactly Evo@{budget}")
-        scores = [_normal(row) for row in group]
+        scores = [_normal(row, normalizers[task]) for row in group]
         running: list[float] = []
         for score in scores:
             running.append(max(running[-1], score) if running else score)
@@ -130,16 +204,21 @@ def evaluate_promotion(
     if budget <= 0 or bootstrap_samples <= 0 or tie_tolerance < 0:
         raise ValueError("invalid promotion arguments")
     groups = {
-        "parent": _task_metrics(_load(parent_paths), budget),
-        "candidate": _task_metrics(_load(candidate_paths), budget),
-        "control": _task_metrics(_load(control_paths), budget),
+        "parent": _load(parent_paths),
+        "candidate": _load(candidate_paths),
+        "control": _load(control_paths),
+    }
+    normalizers = _task_normalizers(groups)
+    metrics = {
+        name: _task_metrics(rows, budget, normalizers)
+        for name, rows in groups.items()
     }
     comparisons: dict[str, dict[str, Any]] = {}
     for offset, baseline in enumerate(("parent", "control")):
         comparisons[f"candidate_vs_{baseline}"] = {
             metric: _compare(
-                groups["candidate"],
-                groups[baseline],
+                metrics["candidate"],
+                metrics[baseline],
                 metric,
                 bootstrap_seed + offset,
                 bootstrap_samples,
@@ -160,7 +239,8 @@ def evaluate_promotion(
     result = {
         "decision": "accept" if all(checks.values()) else "reject",
         "budget": budget,
-        "metrics_by_task": groups,
+        "normalization_by_task": normalizers,
+        "metrics_by_task": metrics,
         "comparisons": comparisons,
         "gate_checks": checks,
     }
