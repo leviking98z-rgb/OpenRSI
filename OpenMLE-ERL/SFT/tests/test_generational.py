@@ -144,6 +144,48 @@ def test_distill_keeps_only_strict_improve_and_invalid_to_valid(tmp_path: Path) 
     ].endswith("```python\nprint(1)\n```")
 
 
+def test_distill_drops_steps_beyond_declared_execution_budget(
+    tmp_path: Path,
+) -> None:
+    split_path = tmp_path / "split.json"
+    _split(split_path, ["task"])
+    task = tmp_path / "rollout/program_ep_0/task"
+    _json(
+        task / "aira_evo/dojo_config.json",
+        {"seed": 11, "task": {"higher_is_better": True}},
+    )
+    steps = [
+        {"step": 0, "operator": "draft", "score": 0.2, "is_buggy": False},
+        {
+            "step": 1,
+            "operator": "improve",
+            "score": 0.4,
+            "is_buggy": False,
+            "parent_steps": [0],
+        },
+        {
+            "step": 2,
+            "operator": "improve",
+            "score": 0.5,
+            "is_buggy": False,
+            "parent_steps": [1],
+        },
+    ]
+    _json(
+        task / "stat.json",
+        {"task_name": "task", "step_limit": 2, "steps": steps},
+    )
+    for step in steps:
+        _step(task, step["step"], step["operator"], step["score"])
+
+    summary = distill_transitions(
+        tmp_path / "rollout", split_path, tmp_path / "distilled"
+    )
+    rows = read_jsonl(tmp_path / "distilled/evo_transitions.manifest.jsonl")
+    assert [row["child_step"] for row in rows] == [1]
+    assert summary["drops"]["outside_execution_budget"] == 1
+
+
 def _messages(label: str, length: int) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": "system"},

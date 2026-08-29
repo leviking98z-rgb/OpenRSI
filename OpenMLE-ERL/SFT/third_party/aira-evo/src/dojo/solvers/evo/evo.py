@@ -827,7 +827,13 @@ class Evolutionary(Solver):
     def debug_cycle(self, state, task, buggy_node: Node):
         current_debug_node = buggy_node  # Start with the initial buggy node
         debug_path = [current_debug_node]  # Path includes the initial buggy node
-        debug_depth = self.cfg.max_debug_depth
+        # The root node is included in current_step but is not an execution.
+        # Reserve one slot for the already evaluated buggy node and never let
+        # its debug descendants exceed the configured execution budget.
+        debug_depth = min(
+            self.cfg.max_debug_depth,
+            max(0, self.cfg.step_limit - self.state.current_step - 1),
+        )
         fixed_metric = None
         # We set the initial debug cycle time to the execution time of the first buggy node
         total_debug_cycle_time = current_debug_node.exec_time if current_debug_node.exec_time is not None else 0
@@ -1041,6 +1047,8 @@ class Evolutionary(Solver):
             island_ids = []
             counter_ids = []
             for counter_id in range(self.cfg.individuals_per_generation):
+                if self.state.current_step >= self.cfg.step_limit:
+                    break
                 if generation_id == 0:  # initially, uniformly populate the islands
                     island_id = random.choice(range(solution_database.num_islands))
                     create_node_fn = self._draft

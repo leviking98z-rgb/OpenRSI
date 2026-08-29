@@ -65,6 +65,12 @@ def test_airaevo_handles_an_all_invalid_search() -> None:
     assert "best_node.code if best_node is not None else None" in source
 
 
+def test_airaevo_enforces_the_execution_budget_during_debug() -> None:
+    source = AIRAEVO_EVO.read_text(encoding="utf-8")
+    assert "self.cfg.step_limit - self.state.current_step - 1" in source
+    assert "if self.state.current_step >= self.cfg.step_limit:" in source
+
+
 def test_external_ray_contract_is_scheduler_neutral() -> None:
     common_source = COMMON.read_text(encoding="utf-8")
     node_source = RAY_NODE.read_text(encoding="utf-8")

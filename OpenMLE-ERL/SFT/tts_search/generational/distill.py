@@ -85,10 +85,22 @@ def distill_transitions(
             higher_is_better = task_cfg.get("higher_is_better")
             if not isinstance(higher_is_better, bool):
                 raise ValueError(f"missing higher_is_better: {config_path}")
-            steps = {
-                int(step["step"]): dict(step)
+            step_limit = int(task_stat.get("step_limit") or 0)
+            raw_steps = [
+                dict(step)
                 for step in task_stat.get("steps") or []
                 if isinstance(step, dict) and "step" in step
+            ]
+            if step_limit > 0:
+                drops["outside_execution_budget"] += sum(
+                    int(step["step"]) >= step_limit for step in raw_steps
+                )
+                raw_steps = [
+                    step for step in raw_steps if int(step["step"]) < step_limit
+                ]
+            steps = {
+                int(step["step"]): dict(step)
+                for step in raw_steps
             }
 
             for child_index, child in sorted(steps.items()):
