@@ -234,6 +234,7 @@ Model weights, task artifacts, training corpora, external benchmark environments
 | [`docs/results.md`](docs/results.md) | Result tables, evaluation protocol, and comparison boundaries |
 | [`docs/training.md`](docs/training.md) | Task pipeline, supervised corpus, and reinforcement-learning summary |
 | [`docs/release.md`](docs/release.md) | Public artifact map, dependencies, and release boundaries |
+| [`RUN_README.md`](RUN_README.md) | Validated single-node Frontis SFT-to-RL runbook, artifacts, and reproduction boundary |
 | [`OpenMLE-Gym/docs/usage.md`](OpenMLE-Gym/docs/usage.md) | Task construction, metadata, evaluation, and smoke workflow |
 | [`OpenMLE-ERL/SFT/docs/usage.md`](OpenMLE-ERL/SFT/docs/usage.md) | Rollout generation, selection, and supervised training |
 | [`OpenMLE-ERL/RL/docs/usage.md`](OpenMLE-ERL/RL/docs/usage.md) | RL configuration, launch profiles, and validation |
