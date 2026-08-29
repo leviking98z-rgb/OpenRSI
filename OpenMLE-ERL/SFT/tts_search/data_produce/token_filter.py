@@ -16,6 +16,16 @@ TOKENIZER: Any = None
 
 def _import_auto_tokenizer() -> Any:
     """Import AutoTokenizer in this local env with a known metadata mismatch."""
+    try:
+        from transformers import AutoTokenizer
+
+        return AutoTokenizer
+    except ImportError:
+        # Older Transformers builds can reject newer, API-compatible package
+        # metadata. Keep the legacy compatibility shim as a fallback only;
+        # applying it unconditionally breaks current Transformers releases.
+        pass
+
     import importlib.metadata as importlib_metadata
 
     original_version = importlib_metadata.version
