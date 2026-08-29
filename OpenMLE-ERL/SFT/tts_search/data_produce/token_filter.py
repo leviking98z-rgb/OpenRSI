@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from tqdm import tqdm
 
 from tts_search.data_produce.common import summary_stats
 
@@ -112,6 +111,8 @@ def count_chat_template_tokens(messages: list[dict[str, str]], tokenizer: Any) -
         tokenize=True,
         add_generation_prompt=False,
     )
+    if isinstance(ids, Mapping):
+        ids = ids["input_ids"]
     return int(len(ids))
 
 
@@ -155,6 +156,8 @@ def count_message_tokens(
     Returns:
         Token counts aligned with input row order.
     """
+
+    from tqdm import tqdm
 
     inputs = [(idx, row["messages"]) for idx, row in enumerate(rows)]
     token_lengths = [0] * len(rows)

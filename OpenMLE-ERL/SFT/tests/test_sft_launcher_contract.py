@@ -17,6 +17,7 @@ GEN_CONFIG = (
 AIRAEVO_EVO = (
     SFT_ROOT / "third_party/aira-evo/src/dojo/solvers/evo/evo.py"
 )
+TOKEN_FILTER = SFT_ROOT / "tts_search/data_produce/token_filter.py"
 
 
 def test_launchers_have_valid_bash_syntax() -> None:
@@ -69,6 +70,12 @@ def test_airaevo_enforces_the_execution_budget_during_debug() -> None:
     source = AIRAEVO_EVO.read_text(encoding="utf-8")
     assert "self.cfg.step_limit - self.state.current_step - 1" in source
     assert "if self.state.current_step >= self.cfg.step_limit:" in source
+
+
+def test_token_filter_counts_batch_encoding_input_ids() -> None:
+    source = TOKEN_FILTER.read_text(encoding="utf-8")
+    assert "if isinstance(ids, Mapping):" in source
+    assert 'ids = ids["input_ids"]' in source
 
 
 def test_external_ray_contract_is_scheduler_neutral() -> None:
