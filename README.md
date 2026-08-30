@@ -233,7 +233,7 @@ Model weights, task artifacts, training corpora, external benchmark environments
 | [Interactive project page](https://frontisai.github.io/OpenRSI/) | Visual overview, release artifacts, results, and project video |
 | [`docs/results.md`](docs/results.md) | Result tables, evaluation protocol, and comparison boundaries |
 | [`docs/training.md`](docs/training.md) | Task pipeline, supervised corpus, and reinforcement-learning summary |
-| [`docs/ma1-recursive-sft-roadmap.md`](docs/ma1-recursive-sft-roadmap.md) | SFT-only MA1 generational bootstrapping, optimization, and core evaluation roadmap |
+| [`docs/ma1-recursive-sft-roadmap.md`](docs/ma1-recursive-sft-roadmap.md) | SFT-only MA1 generational bootstrapping roadmap, optimization protocol, and the 2026-08-29/30 core experiment results |
 | [`docs/release.md`](docs/release.md) | Public artifact map, dependencies, and release boundaries |
 | [`RUN_README.md`](RUN_README.md) | Validated single-node Frontis SFT-to-RL runbook, artifacts, and reproduction boundary |
 | [`OpenMLE-Gym/docs/usage.md`](OpenMLE-Gym/docs/usage.md) | Task construction, metadata, evaluation, and smoke workflow |

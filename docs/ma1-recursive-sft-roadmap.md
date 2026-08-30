@@ -1,6 +1,6 @@
 # MA1 SFT-Only 代际自举 Roadmap
 
-> 状态：核心实验方案
+> 状态：核心实验方案与 2026-08-29/30 执行结果（链路跑通，候选未晋升）
 > 目标：在不改动 OpenMLE-Gym 和 OpenMLE-Evo harness 的前提下，验证一条低成本的
 > `Evo experience -> distillation -> SFT -> model promotion` 权重更新链路，是否能提高整个系统的性能。
 
@@ -557,3 +557,181 @@ MA1 checkpoint: G0 -> G1
 
 > Evo 产生的执行验证经验，可以通过 SFT 被吸收到 MA1 权重中，并在未见任务、
 > 相同搜索预算下提高整个系统的性能。
+
+## 9. 2026-08-29/30 核心实验结果
+
+本节记录一次完整的原型执行。它验证了权重更新链路的工程可行性，但没有观察到
+候选模型的系统性能提升。所有正负结果均按预先固定的 strict gate 保留；没有通过
+放宽样本筛选、缩减 Evo 预算或在 Final Test 上重新挑 checkpoint 制造正向结果。
+
+### 9.1 固定协议
+
+本轮保持以下边界：
+
+- Gym、Evo harness、sandbox 和 scorer 不改；
+- 不新增 RL/GSPO，只进行 continued SFT；
+- Promotion 和 Final Test 各 8 个完整任务；
+- 每题 Evo4，即 4 次程序生成与执行；
+- 最大生成长度 12,288 tokens；
+- task、LLM 和 sandbox 并发均为 8；
+- 使用一个预先固定的 seed `20260829`，把有限预算优先用于更多任务；
+- Final Test 在候选 checkpoint 固定后才打开，且不参与模型选择。
+
+正确的 G0 parent 是 G1 实际继承的 RL 后 checkpoint：
+
+```text
+checkpoints/rl-frontis-qwen36-public-full-v033-g0-hf
+```
+
+一次较早的 Final Test 误把原始 Qwen3.6 checkpoint 当作 G0。该比较及其结论已
+标记为 invalid 并从正式结果中排除。
+
+### 9.2 G1：八条严格 transition 的一代 SFT
+
+G0 在 16 个 Search-Train 任务上运行搜索后，蒸馏得到：
+
+```text
+8 strict transitions
+  6 Debug: invalid parent -> valid child
+  2 Improve: child score strictly better than parent
+7 contributing tasks
+```
+
+训练数据与 matched-compute control 均为 128 行：
+
+```text
+G1 candidate: 8 Evo transitions + 120 shared anchors
+G1 control:   8 token-matched replay rows + 120 shared anchors
+candidate tokens: 1,422,616
+control tokens:   1,422,617
+SFT updates: 3
+```
+
+使用提交 `20f0eb0` 的 pooled raw-score normalization 重新计算 Promotion 后，
+G1 相对 matched G0 parent 的结果为：
+
+| 指标 | G1 - G0 | Win/Tie/Loss | 95% paired bootstrap CI |
+| --- | ---: | ---: | ---: |
+| direct | -0.108879 | 1/5/2 | [-0.422516, 0.143396] |
+| best@4 | -0.204352 | 3/1/4 | [-0.685441, 0.275819] |
+| search AUC | -0.147507 | 3/1/4 | [-0.517549, 0.206490] |
+| valid rate | -0.125000 | 3/1/4 | [-0.437500, 0.187500] |
+
+相对 token-matched SFT control，G1 的 best@4 平均差为 `+0.092921`
+（2/5/1），但置信区间跨零，且它相对真正 parent 的 best 和 valid rate 均退化。
+Promotion gate 因此为：
+
+```text
+G1 decision = reject
+formal champion remains G0
+```
+
+### 9.3 G2：一条严格 transition 的实验分支
+
+为观察递进行为，实验性地从被拒绝的 G1 candidate 继续搜索。新的 8 题
+Search-Train shard 只产生：
+
+```text
+1 strict Improve transition
+```
+
+G2 使用 `1 Evo + 127 anchors`、共 128 行和 3 次 SFT update。它不被视为正式
+champion 的后代，只是诊断性的递进分支。新版 Promotion 结果为：
+
+| 对照 | best@4 平均差 | Win/Tie/Loss | valid-rate 差 |
+| --- | ---: | ---: | ---: |
+| G1 experimental parent | -0.093165 | 1/4/3 | -0.093750 |
+| G1 token-matched control | -0.000243 | 1/5/2 | -0.093750 |
+
+因此：
+
+```text
+G2 decision = reject
+```
+
+### 9.4 G3：strict gate 触发停止
+
+G2 在三个独立的 8 题 Evo4 shard 上继续采集：
+
+```text
+24 tasks
+96 executions
+0 strict Improve/Debug transitions
+```
+
+三批耗时分别为 405、367 和 647 秒。由于没有合格监督信号，系统执行：
+
+```text
+stop_without_weight_update
+G3 SFT not run
+G3 Promotion not run
+```
+
+strict gate 没有被放宽，也没有把失败 endpoint 当作训练数据。
+
+### 9.5 正确 G0 对 G1 的 Final Test
+
+正确 G0 和已固定的 G1 checkpoint 在同一个 8 题 Final Test 上分别运行
+32 次程序执行：
+
+```text
+G0 valid executions: 7/32 = 21.875%
+G1 valid executions: 2/32 =  6.250%
+```
+
+基于 parent、candidate 合并 raw scores 的逐任务归一化结果：
+
+| 指标 | G0 | G1 | G1 - G0 | Win/Tie/Loss | 95% paired bootstrap CI |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| direct | 0.000000 | 0.000000 | 0.000000 | 0/8/0 | [0.000000, 0.000000] |
+| best@4 | 0.327075 | 0.125000 | -0.202075 | 1/4/3 | [-0.625000, 0.250000] |
+| search AUC | 0.176382 | 0.031250 | -0.145132 | 1/4/3 | [-0.344933, 0.031250] |
+| valid rate | 0.218750 | 0.062500 | -0.156250 | 1/4/3 | [-0.406250, 0.093750] |
+
+Final Test 不参与 checkpoint 选择，也不能推翻此前的 Promotion 决策；它作为独立
+验证同样未显示 G1 提升。
+
+### 9.6 效率 smoke
+
+在不减少任务数、Evo 深度或 token 上限的前提下，采用了以下优化：
+
+| 环节 | 原设置 | 采用设置 | 观察 |
+| --- | --- | --- | --- |
+| Eval | TP8，并发 4 | TP8，并发 8 | 307s -> 234s，wall time -23.8% |
+| Eval topology | DP2 x TP4 | 单 TP8 replica | DP2 x TP4 明显更慢，弃用 |
+| SFT optimizer | CPU offload | GPU optimizer | first/warm-cache step 约 722s -> 284-297s |
+| SFT recompute | 尝试关闭 | full uniform recompute | 关闭后更慢且显存更高 |
+| SFT packing | 较小 packing | 16K tokens/GPU | steady step 约 102-126s |
+
+正式 G1 candidate 的三步耗时为 289.1、104.9 和 118.0 秒。采用共享编译缓存，
+并且不保存本原型不需要的 optimizer/RNG checkpoint payload。
+
+### 9.7 解释与下一步
+
+本轮能支持的结论是：
+
+1. `Evo -> strict transition distillation -> continued SFT -> eval/promotion`
+   工程闭环已经端到端跑通；
+2. 在本轮小样本配方下，该链路没有提高系统性能，formal champion 仍是 G0；
+3. 合格 transition 从 G1 的 8 条下降到 G2 的 1 条，再到 G3 的 0 条，说明经验
+   生产质量/密度是当前首要瓶颈，而不是继续无条件增加 SFT 代数；
+4. 搜索 feedback 清洗曾遗漏 sandbox stderr，使部分 Debug 样本只能看到
+   `code_execution_error`，看不到真实 traceback。修复会保留 stderr，但它只用于
+   后续实验，不能回写或美化本轮历史结果。
+
+由于 Promotion 和 Final Test 都只有 8 题、单 seed，且 best@4 的 bootstrap
+置信区间跨零，本轮不支持对更大任务分布作强统计结论；这里的 `reject` 是按预先
+固定 gate 作出的工程决策。负向的 valid-rate 变化和三代 transition 密度下降仍足以
+说明当前配方不应继续自动递进。
+
+下一轮若继续，优先验证 stderr feedback 修复是否提高每次 execution 产生的 strict
+Debug/Improve 样本数；只有经验密度恢复后才值得再次执行权重更新。
+
+节点上的完整实验审计目录为：
+
+```text
+/data2/openrsi/experiments/ma1_recursive_sft_20260829
+```
+
+其中保留原始 rollout、逐次评分、导出 JSONL、Promotion 报告、checkpoint、效率
+smoke 和错误 baseline 的 invalid 标记。

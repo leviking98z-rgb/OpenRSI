@@ -4,12 +4,8 @@ import httpx
 import asyncio
 import re
 import logging
-import black
 import math
-import json
 import random
-import pandas as pd
-from pathlib import Path
 
 # Configure logging format with timestamp at module level
 logger = logging.getLogger("mle_agent")
@@ -262,6 +258,8 @@ def is_valid_python_script(script):
 
 def format_code(code) -> str:
     """Format Python code using Black."""
+    import black
+
     try:
         return black.format_str(code, mode=black.FileMode())
     except black.parsing.InvalidInput:  # type: ignore
@@ -486,6 +484,7 @@ def get_clear_log(run_log: str | None) -> str:
     markers = [
         ("--- OUTPUT START ---", "--- OUTPUT END ---"),
         ("--- SANDBOX STDOUT START ---", "--- SANDBOX STDOUT END ---"),
+        ("--- SANDBOX STDERR START ---", "--- SANDBOX STDERR END ---"),
     ]
 
     hb_marker = "[HB]"
