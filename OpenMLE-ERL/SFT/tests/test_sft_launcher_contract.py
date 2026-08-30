@@ -11,12 +11,9 @@ MEGATRON_MODEL = SFT_ROOT / "slime/slime/backends/megatron_utils/model.py"
 ASYNC_TRAIN = SFT_ROOT / "slime/train_async.py"
 TRAIN_METRICS = SFT_ROOT / "slime/slime/utils/train_metric_utils.py"
 GEN_CONFIG = (
-    SFT_ROOT
-    / "tts_search/configs/experiment/evolutionary_generational_sft.yaml"
+    SFT_ROOT / "tts_search/configs/experiment/evolutionary_generational_sft.yaml"
 )
-AIRAEVO_EVO = (
-    SFT_ROOT / "third_party/aira-evo/src/dojo/solvers/evo/evo.py"
-)
+AIRAEVO_EVO = SFT_ROOT / "third_party/aira-evo/src/dojo/solvers/evo/evo.py"
 TOKEN_FILTER = SFT_ROOT / "tts_search/data_produce/token_filter.py"
 
 
@@ -43,7 +40,7 @@ def test_complete_checkpoint_and_resume_controls_are_explicit() -> None:
     assert "global_dataset_state_dict_${LOAD_ITERATION}.pt" in source
 
 
-def test_candidate_and_control_training_seeds_are_explicit() -> None:
+def test_training_seeds_are_explicit() -> None:
     source = COMMON.read_text(encoding="utf-8")
     assert 'TRAINING_SEED="${TRAINING_SEED:-20260829}"' in source
     assert 'ROLLOUT_SEED="${ROLLOUT_SEED:-20260829}"' in source

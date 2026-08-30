@@ -257,30 +257,23 @@ Final Test:    15-20 tasks
 
 ### 5.1 比较组
 
-最低成本版本：
+当前 critical path 只保留：
 
 ```text
 A. G0
 B. G1 = G0 + Evo-distilled SFT
 ```
 
-推荐加入一个 matched-compute 对照：
-
-```text
-C. G0-SFT-Control
-   使用原始/replay SFT 数据继续训练，
-   与 G1 匹配训练 token 数、update 数和主要超参数
-```
-
-三组分别回答：
+它只回答核心工程问题：
 
 ```text
 G1 > G0
   新增权重更新链路是否带来系统提升？
-
-G1 > G0-SFT-Control
-  提升是否来自 Evo 验证经验，而不只是“多做了一轮 SFT”？
 ```
+
+token-matched replay control 已从默认链路移除：每代不再为它生成数据、训练 checkpoint
+或运行 eval。它属于正结果出现后的归因消融，不参与当前 promotion；在 G1 尚未超过
+G0 时运行该分支不会改变晋升结论，只会增加一次 SFT 和一次完整 eval。
 
 ### 5.2 Eval 1：Direct / first-candidate eval
 
@@ -288,7 +281,6 @@ G1 > G0-SFT-Control
 
 ```text
 G0 direct@1
-G0-SFT-Control direct@1
 G1 direct@1
 ```
 
@@ -322,9 +314,8 @@ task + parent program + execution feedback
 把模型重新接回同一个 Evo harness：
 
 ```text
-G0              + Evo@B
-G0-SFT-Control  + Evo@B
-G1              + Evo@B
+G0 + Evo@B
+G1 + Evo@B
 ```
 
 所有组固定：
@@ -381,12 +372,6 @@ tie 的容差应在看结果前，根据 evaluator 精度预先确定。
 G1 + Evo@B > G0 + Evo@B
 ```
 
-**链路归因证据：**
-
-```text
-G1 + Evo@B > G0-SFT-Control + Evo@B
-```
-
 **权重吸收证据：**
 
 ```text
@@ -421,7 +406,7 @@ G1 has higher Improve/Debug success than G0
 ### Phase O2：提高 SFT 的学习效率
 
 - 先使用单一 candidate 和离线批量 SFT；
-- G1 与 control 匹配训练 token/update budget；
+- 每代只训练一个 candidate，不运行 matched-compute control 分支；
 - 使用 anchor replay 控制遗忘；
 - 根据 held-out operator 指标调整 Draft/Improve/Debug 的采样权重；
 - 通过 Promotion Set 选择 checkpoint，不在 Final Test 上挑 checkpoint；
@@ -470,7 +455,6 @@ G1 has higher Improve/Debug success than G0
 交付：
 
 - G1 checkpoint；
-- matched-token G0-SFT-Control checkpoint；
 - 完整训练配置、数据版本和 parent checkpoint 记录。
 
 退出条件：训练稳定完成，且基础 anchor eval 无明显灾难性退化。
@@ -487,8 +471,7 @@ direct@1
 -> one-shot Final Test
 ```
 
-退出条件：G1 在 Final Test 的 Evo@B 主指标优于 G0；若有 control，G1 还应显示出
-相对 matched-compute continued SFT 的增益。
+退出条件：G1 在 Final Test 的 Evo@B 主指标优于 G0。
 
 ### Phase 4：消融与效率优化
 
@@ -563,6 +546,10 @@ MA1 checkpoint: G0 -> G1
 本节记录一次完整的原型执行。它验证了权重更新链路的工程可行性，但没有观察到
 候选模型的系统性能提升。所有正负结果均按预先固定的 strict gate 保留；没有通过
 放宽样本筛选、缩减 Evo 预算或在 Final Test 上重新挑 checkpoint 制造正向结果。
+
+该已完成实验曾运行 token-matched SFT control。2026-08-30 的后续工程决策已将
+control 从默认 critical path 删除；下文仍保留其历史数字以保证审计完整性，但未来
+generation 不再自动生成、训练或评测该分支。
 
 ### 9.1 固定协议
 

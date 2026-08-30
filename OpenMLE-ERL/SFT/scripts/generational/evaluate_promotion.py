@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the three-way G1 promotion gate."""
+"""Apply the candidate-versus-parent promotion gate."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent", type=Path, nargs="+", required=True)
     parser.add_argument("--candidate", type=Path, nargs="+", required=True)
-    parser.add_argument("--control", type=Path, nargs="+", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--budget", type=int, default=4)
     parser.add_argument("--tie-tolerance", type=float, default=0.0)
@@ -30,7 +29,6 @@ def main() -> None:
     result = evaluate_promotion(
         parent_paths=args.parent,
         candidate_paths=args.candidate,
-        control_paths=args.control,
         output_dir=args.output_dir,
         budget=args.budget,
         tie_tolerance=args.tie_tolerance,

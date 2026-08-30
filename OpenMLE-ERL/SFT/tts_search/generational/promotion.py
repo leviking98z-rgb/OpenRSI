@@ -1,4 +1,4 @@
-"""Paired, task-level promotion gate for G1 versus G0 and replay control."""
+"""Paired, task-level promotion gate for a candidate versus its parent."""
 
 from __future__ import annotations
 
@@ -193,7 +193,6 @@ def evaluate_promotion(
     *,
     parent_paths: list[Path],
     candidate_paths: list[Path],
-    control_paths: list[Path],
     output_dir: Path,
     budget: int = 4,
     tie_tolerance: float = 0.0,
@@ -206,34 +205,29 @@ def evaluate_promotion(
     groups = {
         "parent": _load(parent_paths),
         "candidate": _load(candidate_paths),
-        "control": _load(control_paths),
     }
     normalizers = _task_normalizers(groups)
     metrics = {
-        name: _task_metrics(rows, budget, normalizers)
-        for name, rows in groups.items()
+        name: _task_metrics(rows, budget, normalizers) for name, rows in groups.items()
     }
-    comparisons: dict[str, dict[str, Any]] = {}
-    for offset, baseline in enumerate(("parent", "control")):
-        comparisons[f"candidate_vs_{baseline}"] = {
+    comparisons = {
+        "candidate_vs_parent": {
             metric: _compare(
                 metrics["candidate"],
-                metrics[baseline],
+                metrics["parent"],
                 metric,
-                bootstrap_seed + offset,
+                bootstrap_seed,
                 bootstrap_samples,
                 tie_tolerance,
             )
             for metric in ("direct", "best", "auc", "valid_rate")
         }
+    }
     parent_best = comparisons["candidate_vs_parent"]["best"]
-    control_best = comparisons["candidate_vs_control"]["best"]
     valid = comparisons["candidate_vs_parent"]["valid_rate"]
     checks = {
         "best_mean_gt_parent": parent_best["mean_delta"] > 0,
         "best_wins_gt_losses_parent": parent_best["wins"] > parent_best["losses"],
-        "best_mean_gt_control": control_best["mean_delta"] > 0,
-        "best_wins_gt_losses_control": control_best["wins"] > control_best["losses"],
         "valid_rate_not_regressed": valid["mean_delta"] >= min_valid_rate_delta,
     }
     result = {

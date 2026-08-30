@@ -1,11 +1,10 @@
-"""Build equal-row, exact-token-audited candidate and replay controls."""
+"""Build one candidate SFT mixture from verified Evo rows and replay."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import random
-from bisect import bisect_left
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -65,31 +64,7 @@ def _token_counter(tokenizer_model: Path) -> Callable[[list[dict[str, str]]], in
     return lambda value: count_chat_template_tokens(value, tokenizer)
 
 
-def _match_tokens(
-    targets: list[dict[str, Any]], pool: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    ranked = sorted((int(row["training_tokens"]), str(row["id"]), row) for row in pool)
-    lengths = [item[0] for item in ranked]
-    result: list[dict[str, Any]] = []
-    for target in sorted(
-        targets, key=lambda row: (-int(row["training_tokens"]), str(row["id"]))
-    ):
-        wanted = int(target["training_tokens"])
-        position = bisect_left(lengths, wanted)
-        candidates = {max(0, position - 1), min(len(ranked) - 1, position)}
-        selected = min(
-            candidates,
-            key=lambda index: (
-                abs(ranked[index][0] - wanted),
-                ranked[index][1],
-            ),
-        )
-        result.append(ranked.pop(selected)[2])
-        lengths.pop(selected)
-    return result
-
-
-def build_matched_mixtures(
+def build_candidate_mixture(
     *,
     anchor_path: Path,
     evo_path: Path,
@@ -99,7 +74,6 @@ def build_matched_mixtures(
     total_rows: int = 128,
     seed: int = 20260829,
     max_tokens: int = 32768,
-    max_token_mismatch_fraction: float = 0.01,
     count_tokens: Callable[[list[dict[str, str]]], int] | None = None,
 ) -> dict[str, Any]:
     if total_rows <= 0:
@@ -142,29 +116,15 @@ def build_matched_mixtures(
             f"need room for replay anchors: {len(evo)} Evo rows >= {total_rows}"
         )
 
-    if len(anchor) < total_rows:
-        raise ValueError(f"need {total_rows} anchor rows, found {len(anchor)}")
-    matched = _match_tokens(evo, anchor)
-    matched_ids = {row["id"] for row in matched}
-    remaining = [row for row in anchor if row["id"] not in matched_ids]
+    replay_rows = total_rows - len(evo)
+    if len(anchor) < replay_rows:
+        raise ValueError(f"need {replay_rows} anchor rows, found {len(anchor)}")
     rng = random.Random(seed)
-    rng.shuffle(remaining)
-    shared = remaining[: total_rows - len(evo)]
-
-    pairs = [(row, row) for row in shared] + list(zip(evo, matched, strict=True))
-    rng.shuffle(pairs)
-    candidate = [left for left, _ in pairs]
-    control = [right for _, right in pairs]
+    rng.shuffle(anchor)
+    replay = anchor[:replay_rows]
+    candidate = replay + evo
+    rng.shuffle(candidate)
     candidate_tokens = sum(row["training_tokens"] for row in candidate)
-    control_tokens = sum(row["training_tokens"] for row in control)
-    mismatch = abs(candidate_tokens - control_tokens) / max(
-        candidate_tokens, control_tokens, 1
-    )
-    if mismatch > max_token_mismatch_fraction:
-        raise ValueError(
-            f"candidate/control token mismatch {mismatch:.6f} exceeds "
-            f"{max_token_mismatch_fraction:.6f}"
-        )
 
     def manifest(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
@@ -176,26 +136,18 @@ def build_matched_mixtures(
     candidate_artifacts = write_sft_pair(
         output_dir, "candidate_train", candidate, manifest(candidate)
     )
-    control_artifacts = write_sft_pair(
-        output_dir, "control_train", control, manifest(control)
-    )
     summary = {
         "seed": seed,
         "requested_total_rows": total_rows,
         "evo_rows": len(evo),
-        "shared_anchor_rows": len(shared),
-        "matched_control_rows": len(matched),
+        "replay_anchor_rows": len(replay),
         "candidate_rows": len(candidate),
-        "control_rows": len(control),
         "candidate_tokens": candidate_tokens,
-        "control_tokens": control_tokens,
-        "token_mismatch_fraction": mismatch,
         "tokenizer_model": str(tokenizer_model),
         "max_tokens": max_tokens,
         "anchor_drops": dict(anchor_drops),
         "evo_drops": dict(evo_drops),
         "candidate_artifacts": candidate_artifacts,
-        "control_artifacts": control_artifacts,
     }
     write_json(output_dir / "mixture_summary.json", summary)
     return summary

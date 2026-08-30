@@ -5,6 +5,12 @@
 > Result: the update path worked end to end, but G1 and G2 were rejected  
 > Formal champion after the experiment: G0
 
+> Historical-scope note: this completed run included a token-matched SFT
+> control. On 2026-08-30 that control was removed from the default critical
+> path. Its artifacts and measurements below remain unchanged for auditability,
+> but future generations train and evaluate only the candidate versus its
+> parent.
+
 ## 1. Objective
 
 This experiment tested a minimal weight-update loop while keeping

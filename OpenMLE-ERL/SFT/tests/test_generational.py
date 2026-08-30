@@ -8,7 +8,7 @@ from tts_search.generational.common import read_jsonl, write_jsonl
 from tts_search.generational.distill import distill_transitions
 from tts_search.generational.eval_data import build_eval_data, load_split
 from tts_search.generational.evo_eval import export_evolutionary_eval
-from tts_search.generational.mixture import build_matched_mixtures
+from tts_search.generational.mixture import build_candidate_mixture
 from tts_search.generational.promotion import evaluate_promotion
 
 
@@ -194,7 +194,7 @@ def _messages(label: str, length: int) -> list[dict[str, str]]:
     ]
 
 
-def test_mixture_has_shared_replay_and_token_matched_control(tmp_path: Path) -> None:
+def test_mixture_contains_verified_evo_and_replay(tmp_path: Path) -> None:
     split_path = tmp_path / "split.json"
     _split(split_path, ["train-a", "train-b"])
     anchor_path = tmp_path / "anchor.jsonl"
@@ -214,25 +214,21 @@ def test_mixture_has_shared_replay_and_token_matched_control(tmp_path: Path) -> 
     write_jsonl(anchor_path, anchor_rows)
     write_jsonl(evo_path, evo_rows)
 
-    summary = build_matched_mixtures(
+    summary = build_candidate_mixture(
         anchor_path=anchor_path,
         evo_path=evo_path,
         split_path=split_path,
         tokenizer_model=Path("/required-but-injected"),
         output_dir=tmp_path / "mix",
         total_rows=6,
-        max_token_mismatch_fraction=0.01,
         count_tokens=lambda value: len(value[-1]["content"]),
     )
     candidate = read_jsonl(tmp_path / "mix/candidate_train.manifest.jsonl")
-    control = read_jsonl(tmp_path / "mix/control_train.manifest.jsonl")
-    assert summary["candidate_rows"] == summary["control_rows"] == 6
+    assert summary["candidate_rows"] == 6
+    assert summary["replay_anchor_rows"] == 4
     assert sum(row["source"] == "evo" for row in candidate) == 2
-    assert sum(row["source"] == "evo" for row in control) == 0
-    candidate_anchor_ids = {row["id"] for row in candidate if row["source"] == "anchor"}
-    control_ids = {row["id"] for row in control}
-    assert candidate_anchor_ids < control_ids
-    assert summary["token_mismatch_fraction"] == 0.0
+    assert sum(row["source"] == "anchor" for row in candidate) == 4
+    assert not (tmp_path / "mix/control_train.jsonl").exists()
 
 
 def _eval_rows(values: dict[str, float], seed: int) -> list[dict[str, Any]]:
@@ -279,15 +275,12 @@ def test_export_and_task_level_promotion_gate(tmp_path: Path) -> None:
     assert read_jsonl(exported)[0]["execution_index"] == 0
 
     parent = tmp_path / "parent.jsonl"
-    control = tmp_path / "control.jsonl"
     candidate = tmp_path / "candidate.jsonl"
     write_jsonl(parent, _eval_rows({"task-a": 0.4, "task-b": 0.3}, 1))
-    write_jsonl(control, _eval_rows({"task-a": 0.45, "task-b": 0.35}, 1))
     write_jsonl(candidate, _eval_rows({"task-a": 0.7, "task-b": 0.6}, 1))
     result = evaluate_promotion(
         parent_paths=[parent],
         candidate_paths=[candidate],
-        control_paths=[control],
         output_dir=tmp_path / "promotion",
         bootstrap_samples=100,
     )
@@ -317,16 +310,13 @@ def test_promotion_uses_raw_scores_when_reward_is_constant_zero(
         ]
 
     parent = tmp_path / "parent.jsonl"
-    control = tmp_path / "control.jsonl"
     candidate = tmp_path / "candidate.jsonl"
     write_jsonl(parent, rows(3.0, "parent"))
-    write_jsonl(control, rows(2.0, "control"))
     write_jsonl(candidate, rows(1.0, "candidate"))
 
     result = evaluate_promotion(
         parent_paths=[parent],
         candidate_paths=[candidate],
-        control_paths=[control],
         output_dir=tmp_path / "promotion",
         bootstrap_samples=100,
     )
@@ -335,5 +325,4 @@ def test_promotion_uses_raw_scores_when_reward_is_constant_zero(
         "pooled_observed_range"
     )
     assert result["comparisons"]["candidate_vs_parent"]["best"]["mean_delta"] > 0
-    assert result["comparisons"]["candidate_vs_control"]["best"]["mean_delta"] > 0
     assert result["decision"] == "accept"
