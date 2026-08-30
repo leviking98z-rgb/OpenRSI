@@ -234,6 +234,7 @@ Model weights, task artifacts, training corpora, external benchmark environments
 | [`docs/results.md`](docs/results.md) | Result tables, evaluation protocol, and comparison boundaries |
 | [`docs/training.md`](docs/training.md) | Task pipeline, supervised corpus, and reinforcement-learning summary |
 | [`docs/ma1-recursive-sft-roadmap.md`](docs/ma1-recursive-sft-roadmap.md) | SFT-only MA1 generational bootstrapping roadmap, optimization protocol, and the 2026-08-29/30 core experiment results |
+| [`exp/ma1_recursive_sft_20260829.md`](exp/ma1_recursive_sft_20260829.md) | Concise MA1 recursive-SFT experiment record: evaluation, W&B training curves, efficiency, and artifact provenance |
 | [`docs/release.md`](docs/release.md) | Public artifact map, dependencies, and release boundaries |
 | [`RUN_README.md`](RUN_README.md) | Validated single-node Frontis SFT-to-RL runbook, artifacts, and reproduction boundary |
 | [`OpenMLE-Gym/docs/usage.md`](OpenMLE-Gym/docs/usage.md) | Task construction, metadata, evaluation, and smoke workflow |
