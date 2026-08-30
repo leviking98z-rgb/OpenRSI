@@ -722,3 +722,182 @@ Debug/Improve 样本数；只有经验密度恢复后才值得再次执行权重
 
 其中保留原始 rollout、逐次评分、导出 JSONL、Promotion 报告、checkpoint、效率
 smoke 和错误 baseline 的 invalid 标记。
+
+## 10. 下一轮：8 节点自生成数据计划
+
+### 10.1 为什么不再使用 Evo4 作为正式采集深度
+
+Evo4 已经完成它的职责：验证
+
+```text
+MA1 -> Evo -> sandbox/scorer -> lineage -> messages -> SFT artifact
+```
+
+链路可以正常工作。但它只够覆盖 Draft 和最早的一次 Debug，难以稳定产生 Improve，
+更难积累两个有效 parent 触发 Crossover，因此不能作为正式 Trace Bank 的默认深度。
+
+论文公开配置对 evolutionary collection 使用每题最多 64 次 operator execution。
+对公开的 9,014 条 evolutionary SFT rows 进行统计，所选 operator 在搜索树中的
+全局执行位置为：
+
+| 统计量 | 1-based operator position |
+| --- | ---: |
+| mean | 17.3 |
+| median | 12 |
+| 75th percentile | 25 |
+| 90th percentile | 44 |
+
+累计覆盖率为：
+
+| 搜索预算 | 已覆盖的公开 selected-row 位置 |
+| --- | ---: |
+| Evo4 | 22.7% |
+| Evo8 | 40.2% |
+| Evo16 | 61.8% |
+| Evo32 | 82.5% |
+| Evo48 | 92.7% |
+| Evo64 | 99.7% |
+
+这里的 position 是任务内的全局 operator execution 序号，并不等于某个 child 的
+祖先链长度。下一轮将统一使用“execution budget”描述深度，避免把二者混淆。
+
+### 10.2 第一批 Trace Bank 的规模
+
+冻结公开 `FrontisAI/Frontis-MA1-35B` 作为 G0，选择 64 个全新的 Search-Train
+任务。任务与固定 Promotion、Final Test 以及本轮 pilot 按
+competition/dataset family 隔离。
+
+8 个节点各运行一个 TP8 SGLang replica，并按任务分片：
+
+```text
+D16: 64 tasks，所有任务运行到 16 executions
+D32: 从中选择 32 个 productive tasks，继续到 32 executions
+D64: 从中选择 16 个 productive tasks，继续到 64 executions
+```
+
+最大执行量：
+
+```text
+64 x 16 + 32 x 16 + 16 x 32 = 2,048 operator executions
+```
+
+每个任务在三个阶段始终留在同一节点，继续使用同一个 Program DB，不从头重跑。
+8 个节点分别承担 8 个 D16 任务、4 个 D32 任务和 2 个 D64 任务。只使用一个固定
+采样 seed，把计算优先用于任务覆盖和有效搜索深度，而不是 seed 重复。
+
+如果第一批没有达到训练数据 yield gate，再使用第二批 64 个完全不重合的
+Search-Train 任务重复该协议；不会一开始就承诺第二批，也不会无条件把所有任务跑满
+64 步。
+
+### 10.3 搜索配置
+
+Evo4 smoke 使用的 `crossover_prob=0`、单 candidate、单层 Debug 配置不再用于正式
+采集。正式 profile 以论文公开 evolutionary profile 为基础：
+
+```text
+operators: Draft / Improve / Debug / Crossover
+individuals_per_generation: 5
+crossover_prob: 0.5
+num_generations_till_crossover: 2
+max_debug_depth: 10
+execution budgets: 16 -> 32 -> 64
+```
+
+模型始终冻结。Evo 只负责选择 operator 和 parent、维护搜索树并调度执行；每次
+operator 的输出仍由同一个 G0 生成。
+
+### 10.4 深度晋级规则
+
+D16 到 D32 的任务至少满足一项：
+
+- 已出现 invalid parent -> valid child 的 Debug；
+- 已出现有效 Improve，或有效候选仍有明确 score headroom；
+- 至少有两个非重复有效 parent，已经具备 Crossover 条件；
+- 最近的有效结果仍在提高，尚未显示饱和。
+
+D32 到 D64 的任务至少满足一项：
+
+- 已产生 strict Improve 或 strict Crossover；
+- 存在两个有价值且方向不同的有效分支；
+- 最近 8 次 execution 中仍有新的 best score。
+
+以下任务停止加深：
+
+- 重复同一种确定性程序错误且没有修复进展；
+- 仅重复基础设施失败；
+- 候选代码高度重复；
+- 没有形成可继续修改的有效 parent；
+- 分数已稳定且新增执行不再产生新 best。
+
+基础设施错误允许单独重试并明确标记；模型自身的错误、stderr、timeout 和
+scoring failure 必须原样保留，不能清洗成成功数据。
+
+### 10.5 Raw Trace Bank 与 SFT 视图
+
+Raw Trace Bank 无条件保存四类 operator 的成功与失败：
+
+```text
+Draft
+Debug
+Improve
+Crossover
+```
+
+每条记录保留 task/shard、G0 revision、operator、parent/child、完整 messages、
+代码、execution feedback、score/方向、validity、token、runtime 和 hash。Raw bank
+验收后冻结；不同训练配方只做离线派生，不重新调用模型。
+
+从同一 Raw bank 生成四个可审计视图：
+
+| View | 规则 |
+| --- | --- |
+| `strict_only` | invalid-to-valid Debug；严格优于 parent 的 Improve；严格优于更强 parent 的 Crossover |
+| `verified_endpoint` | 每题最佳的已复验 valid endpoint，改写为 Draft |
+| `causal_segment` | 达到 endpoint gate 的局部 segment 中，对最终有效方案有继承贡献的步骤 |
+| `main_g1` | 当前 Trace Bank 的 Draft endpoint 与高质量 non-Draft 的去重、限额并集 |
+
+每条 selected row 显式标记 `strict`、`causal` 或 `endpoint`。非 strict 样本可以进入
+候选池，但绝不标成 strict。第一版不恢复旧的 historical anchor/replay；当前
+Trace Bank 内的高质量 Draft 自身承担基础能力样本的作用。
+
+### 10.6 数据量与质量门槛
+
+第一批 2,048 次 raw executions 的期望产物是：
+
+```text
+400-800 train-ready rows
+>= 32 contributing tasks
+>= 128 non-Draft rows
+>= 64 Debug rows
+>= 32 Improve rows
+>= 8 Crossover rows
+```
+
+这些是开始 G1 SFT 的最低覆盖目标，不是降低质量标准来凑数的 quota。若某个类别不够，
+优先增加新的 Search-Train tasks，再选择性加深；不把无提升、不可执行或 parent
+不一致的记录改写成正样本。
+
+最终数据还必须通过：
+
+- selected endpoint 重新执行与重新评分；
+- parent/child lineage 一致性；
+- private-label、外网与主机路径泄漏检查；
+- 完整 messages exact dedup 和代码去重；
+- near-duplicate 报告与 per-task cap；
+- G0 chat template 精确 tokenization；
+- 32,768-token 上限；
+- JSONL/Parquet 内容一致及文件 hash 固化。
+
+### 10.7 与论文规模的关系
+
+这仍然是 core experiment，而不是论文复现。论文最终使用 26,259 条 SFT 样本，
+覆盖 4,891 个任务，其中 9,014 条来自最多 64 executions 的 evolutionary path。
+本计划只采集第一批最多 2,048 次 execution，用来得到数百条本模型自生成且可验证的
+operator 数据。
+
+因此本阶段只回答：
+
+> 增加真实搜索深度后，MA1 能否制造足够多、覆盖四类 operator 的健康 SFT 数据，
+> 并使一次 G1 continued SFT 在独立 eval 上超过 G0？
+
+它不声称复制论文的数据规模，也不以 Trace Bank 内部的训练分数作为性能提升证据。
