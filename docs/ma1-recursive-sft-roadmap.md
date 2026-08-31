@@ -420,7 +420,8 @@ G1 has higher Improve/Debug success than G0
 - 根据 valid/invalid 状态选择 Improve 或 Debug；
 - 删除持续无收益的分支；
 - 以“合格训练样本数 / program execution”和“最终分数 / execution”作为效率指标；
-- 最后才考虑 adaptive budget、更深搜索或重新启用 Crossover。
+- 当前第一批固定为 D16，不在同一批任务上继续 D32/D64；
+- Crossover 保持论文式配置：第 2 generation 后、存在两个合格 parent 时可用。
 
 优化后的版本仍需与原始 fixed-budget profile 做隔离对照，防止把搜索预算变化误认为
 模型权重提升。
@@ -770,24 +771,20 @@ competition/dataset family 隔离。
 8 个节点各运行一个 TP8 SGLang replica，并按任务分片：
 
 ```text
-D16: 64 tasks，所有任务运行到 16 executions
-D32: 从中选择 32 个 productive tasks，继续到 32 executions
-D64: 从中选择 16 个 productive tasks，继续到 64 executions
+D16: 64 tasks，每个任务最多 16 executions
 ```
 
 最大执行量：
 
 ```text
-64 x 16 + 32 x 16 + 16 x 32 = 2,048 operator executions
+64 x 16 = 1,024 operator executions
 ```
 
-每个任务在三个阶段始终留在同一节点，继续使用同一个 Program DB，不从头重跑。
-8 个节点分别承担 8 个 D16 任务、4 个 D32 任务和 2 个 D64 任务。只使用一个固定
-采样 seed，把计算优先用于任务覆盖和有效搜索深度，而不是 seed 重复。
+8 个节点分别承担 8 个 D16 任务。只使用一个固定采样 seed，把计算优先用于任务
+覆盖和有效谱系数量，而不是 seed 重复。
 
 如果第一批没有达到训练数据 yield gate，再使用第二批 64 个完全不重合的
-Search-Train 任务重复该协议；不会一开始就承诺第二批，也不会无条件把所有任务跑满
-64 步。
+Search-Train 任务重复该协议；不在当前任务上继续加深。
 
 ### 10.3 搜索配置
 
@@ -800,37 +797,18 @@ individuals_per_generation: 5
 crossover_prob: 0.5
 num_generations_till_crossover: 2
 max_debug_depth: 10
-execution budgets: 16 -> 32 -> 64
+execution budget: 16
 ```
 
 模型始终冻结。Evo 只负责选择 operator 和 parent、维护搜索树并调度执行；每次
 operator 的输出仍由同一个 G0 生成。
 
-### 10.4 深度晋级规则
+### 10.4 固定 D16 边界
 
-D16 到 D32 的任务至少满足一项：
-
-- 已出现 invalid parent -> valid child 的 Debug；
-- 已出现有效 Improve，或有效候选仍有明确 score headroom；
-- 至少有两个非重复有效 parent，已经具备 Crossover 条件；
-- 最近的有效结果仍在提高，尚未显示饱和。
-
-D32 到 D64 的任务至少满足一项：
-
-- 已产生 strict Improve 或 strict Crossover；
-- 存在两个有价值且方向不同的有效分支；
-- 最近 8 次 execution 中仍有新的 best score。
-
-以下任务停止加深：
-
-- 重复同一种确定性程序错误且没有修复进展；
-- 仅重复基础设施失败；
-- 候选代码高度重复；
-- 没有形成可继续修改的有效 parent；
-- 分数已稳定且新增执行不再产生新 best。
-
-基础设施错误允许单独重试并明确标记；模型自身的错误、stderr、timeout 和
-scoring failure 必须原样保留，不能清洗成成功数据。
+本轮不做任务级深度晋级，也不根据中间结果把部分任务加深到 D32/D64。这样 64 个
+任务使用同一个最大 execution budget，避免把自适应预算策略引入首个数据配方实验。
+基础设施错误允许重试并明确标记；模型自身的错误、stderr、timeout 和 scoring
+failure 必须原样保留。
 
 ### 10.5 Raw Trace Bank 与 SFT 视图
 
@@ -862,20 +840,18 @@ Trace Bank 内的高质量 Draft 自身承担基础能力样本的作用。
 
 ### 10.6 数据量与质量门槛
 
-第一批 2,048 次 raw executions 的期望产物是：
+第一批最多 1,024 次 raw executions 不预设必须达到的 SFT 行数。完成后首先报告：
 
 ```text
-400-800 train-ready rows
->= 32 contributing tasks
->= 128 non-Draft rows
->= 64 Debug rows
->= 32 Improve rows
->= 8 Crossover rows
+实际 execution 数及有效/失败数
+Draft / Debug / Improve / Crossover 数量与比例
+strict transition 和 verified endpoint 数
+contributing task 数
+full-message / assistant token 长度分布
 ```
 
-这些是开始 G1 SFT 的最低覆盖目标，不是降低质量标准来凑数的 quota。若某个类别不够，
-优先增加新的 Search-Train tasks，再选择性加深；不把无提升、不可执行或 parent
-不一致的记录改写成正样本。
+这些统计决定后续 recipe 和是否需要第二批不重叠任务；不把 non-strict 记录改写成
+strict，也不为了凑数纳入不可执行或 parent 不一致的样本。
 
 最终数据还必须通过：
 
@@ -892,7 +868,7 @@ Trace Bank 内的高质量 Draft 自身承担基础能力样本的作用。
 
 这仍然是 core experiment，而不是论文复现。论文最终使用 26,259 条 SFT 样本，
 覆盖 4,891 个任务，其中 9,014 条来自最多 64 executions 的 evolutionary path。
-本计划只采集第一批最多 2,048 次 execution，用来得到数百条本模型自生成且可验证的
+本计划只采集第一批最多 1,024 次 execution，用来得到本模型自生成且可验证的
 operator 数据。
 
 因此本阶段只回答：
@@ -901,3 +877,32 @@ operator 数据。
 > 并使一次 G1 continued SFT 在独立 eval 上超过 G0？
 
 它不声称复制论文的数据规模，也不以 Trace Bank 内部的训练分数作为性能提升证据。
+
+### 10.8 持续唯一任务采集实现
+
+固定 64-task D16 批次之后，采集器切换为 slot 级动态分发，而不是提前给每个节点
+发完一个静态 task 列表：
+
+```text
+slot 完成当前 task
+-> 写入 terminal manifest 和不可变 archive
+-> 原子领取一个从未运行过的新 task
+-> 仍使用 sample_index=0
+```
+
+冻结后的可用 Search-Train inventory 共 928 个唯一 task，按运行环境拆成互不重叠的
+825-task H20 pool 和 103-task L20 pool。固定 64 题、Promotion、Final Test 及同源
+family 均已排除。共享 `mkdir` claim 是唯一任务所有权边界，因此节点速度不同时也不会
+重复运行同一 task。
+
+实现与审计材料位于：
+
+```text
+exp/g0_continuous_tracebank_20260831/
+```
+
+其中 validator 要求每个成功 trace 具备 16 个连续 execution、完整 parent lineage、
+逐步 score/status/token/runtime、搜索事件与状态文件，以及 archive SHA-256 一致。
+2026 年 8 月 31 日的首个 25-task L20 检查点已全部通过，共 400 次 execution；
+operator 分布为 Draft 111、Debug 220、Improve 63、Crossover 6。完成 task 的中位
+端到端耗时为 13.6 分钟，且 8 个 slot 均已自动补入新 task。

@@ -1,0 +1,76 @@
+#!/data2/openrsi/experiments/ma1_recursive_sft_20260829/envs/rollout-min/bin/python
+"""Minimal zstd/unzstd CLI shim for the L20 worker container."""
+from __future__ import annotations
+import os
+from pathlib import Path
+import shutil
+import sys
+import zstandard
+
+args = sys.argv[1:]
+program = Path(sys.argv[0]).name
+is_decompress = program.startswith("unzstd") or any(x in args for x in ("-d", "--decompress"))
+to_stdout = any(x in args for x in ("-c", "--stdout"))
+output = None
+inputs = []
+level = 3
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg in ("-o", "--output"):
+        i += 1
+        if i >= len(args):
+            raise SystemExit("missing output path")
+        output = args[i]
+    elif arg.startswith("-"):
+        if len(arg) > 1 and arg[1:].isdigit():
+            level = int(arg[1:])
+        # Ignore compatible flags such as -T0, -q, -f, -c, -d.
+    else:
+        inputs.append(arg)
+    i += 1
+
+if is_decompress:
+    if not inputs:
+        sources = [sys.stdin.buffer]
+    else:
+        sources = [open(path, "rb") for path in inputs]
+    if output:
+        target = open(output, "wb")
+    elif to_stdout or not output:
+        target = sys.stdout.buffer
+    try:
+        for source in sources:
+            with zstandard.ZstdDecompressor().stream_reader(source) as reader:
+                shutil.copyfileobj(reader, target, length=8 << 20)
+    except BrokenPipeError:
+        pass
+    finally:
+        for source in sources:
+            if source is not sys.stdin.buffer:
+                source.close()
+        if target is not sys.stdout.buffer:
+            target.close()
+else:
+    if len(inputs) > 1:
+        raise SystemExit("minimal shim accepts at most one input")
+    source = open(inputs[0], "rb") if inputs else sys.stdin.buffer
+    if output:
+        target = open(output, "wb")
+    elif to_stdout:
+        target = sys.stdout.buffer
+    elif inputs:
+        target = open(inputs[0] + ".zst", "wb")
+    else:
+        raise SystemExit("compression requires -o or -c")
+    try:
+        compressor = zstandard.ZstdCompressor(level=level, threads=-1)
+        with compressor.stream_writer(target, closefd=False) as writer:
+            shutil.copyfileobj(source, writer, length=8 << 20)
+    except BrokenPipeError:
+        pass
+    finally:
+        if source is not sys.stdin.buffer:
+            source.close()
+        if target is not sys.stdout.buffer:
+            target.close()

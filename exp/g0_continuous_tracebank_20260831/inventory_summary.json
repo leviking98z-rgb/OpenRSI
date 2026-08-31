@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-08-31T00:12:53.841951+00:00",
+  "eligible": 928,
+  "excluded_current": 64,
+  "excluded_heldout": 16,
+  "h20": 825,
+  "in_released_sft": 919,
+  "l20": 103,
+  "metadata_failures": 3,
+  "pool_rule": "fixed audited eight first on L20, then smallest tasks until ~1/9 total; remaining tasks to H20; pools disjoint",
+  "release_revision": "f56e4b31252a9b81d95fea100098cd49b7290398",
+  "schema_version": 1,
+  "selection": "CPU classification/regression; exclude current D16 tasks and exact/family Promotion/Final Test; released-SFT overlap retained and labelled"
+}
