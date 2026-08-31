@@ -10,6 +10,11 @@ from tts_search.generational.eval_data import build_eval_data, load_split
 from tts_search.generational.evo_eval import export_evolutionary_eval
 from tts_search.generational.mixture import build_candidate_mixture
 from tts_search.generational.promotion import evaluate_promotion
+from tts_search.generational.standard_eval import (
+    evaluate_e2e,
+    evaluate_operator,
+    select_task_names,
+)
 
 
 def _json(path: Path, value: Any) -> None:
@@ -326,3 +331,183 @@ def test_promotion_uses_raw_scores_when_reward_is_constant_zero(
     )
     assert result["comparisons"]["candidate_vs_parent"]["best"]["mean_delta"] > 0
     assert result["decision"] == "accept"
+
+
+def test_standard_e2e_uses_frozen_task_prefix_and_configurable_budget(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "tasks.jsonl"
+    write_jsonl(
+        manifest,
+        [
+            {"metadata": {"task_name": "task-b"}},
+            {"metadata": {"task_name": "task-a"}},
+            {"metadata": {"task_name": "task-unused"}},
+        ],
+    )
+    assert select_task_names(manifest, 2) == ["task-b", "task-a"]
+
+    def rows(scores: dict[str, list[float]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "task_name": task_name,
+                "seed": 1,
+                "execution_index": index,
+                "score": score,
+                "valid": True,
+                "higher_is_better": True,
+                "theoretical_min": 0.0,
+                "theoretical_max": 1.0,
+            }
+            for task_name, task_scores in scores.items()
+            for index, score in enumerate(task_scores)
+        ]
+
+    parent = tmp_path / "parent.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+    write_jsonl(
+        parent,
+        rows(
+            {
+                "task-a": [0.1, 0.2],
+                "task-b": [0.2, 0.3],
+                "task-unused": [0.9],
+            }
+        ),
+    )
+    write_jsonl(
+        candidate,
+        rows(
+            {
+                "task-a": [0.2, 0.4],
+                "task-b": [0.3, 0.5],
+                "task-unused": [0.1],
+            }
+        ),
+    )
+
+    result = evaluate_e2e(
+        parent_paths=[parent],
+        candidate_paths=[candidate],
+        task_manifest=manifest,
+        num_tasks=2,
+        budget=2,
+        output_dir=tmp_path / "e2e",
+        bootstrap_samples=100,
+    )
+
+    assert result["selected_tasks"] == ["task-b", "task-a"]
+    assert result["budget"] == 2
+    assert result["decision"] == "accept"
+    assert result["comparisons"]["candidate_vs_parent"]["best"]["wins"] == 2
+    assert (tmp_path / "e2e/standard_eval.json").is_file()
+
+
+def test_standard_operator_eval_applies_debug_improve_gate(
+    tmp_path: Path,
+) -> None:
+    cases = tmp_path / "cases.jsonl"
+    write_jsonl(
+        cases,
+        [
+            {
+                "case_id": "t1-debug",
+                "task_name": "task-1",
+                "operator": "debug",
+                "parent_valid": False,
+                "parent_score": None,
+                "higher_is_better": True,
+            },
+            {
+                "case_id": "t1-improve",
+                "task_name": "task-1",
+                "operator": "improve",
+                "parent_valid": True,
+                "parent_score": 0.5,
+                "higher_is_better": True,
+            },
+            {
+                "case_id": "t2-debug",
+                "task_name": "task-2",
+                "operator": "debug",
+                "parent_valid": False,
+                "parent_score": None,
+                "higher_is_better": True,
+            },
+            {
+                "case_id": "t2-improve",
+                "task_name": "task-2",
+                "operator": "improve",
+                "parent_valid": True,
+                "parent_score": 0.2,
+                "higher_is_better": False,
+            },
+            {
+                "case_id": "unused",
+                "task_name": "task-unused",
+                "operator": "debug",
+                "parent_valid": False,
+            },
+        ],
+    )
+
+    def result(
+        case_id: str,
+        task_name: str,
+        operator: str,
+        valid: bool,
+        score: float | None,
+    ) -> dict[str, Any]:
+        return {
+            "case_id": case_id,
+            "task_name": task_name,
+            "operator": operator,
+            "valid": valid,
+            "score": score,
+        }
+
+    parent = tmp_path / "parent.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+    write_jsonl(
+        parent,
+        [
+            result("t1-debug", "task-1", "debug", False, None),
+            result("t1-improve", "task-1", "improve", True, 0.6),
+            result("t2-debug", "task-2", "debug", True, 0.1),
+            result("t2-improve", "task-2", "improve", True, 0.15),
+        ],
+    )
+    write_jsonl(
+        candidate,
+        [
+            result("t1-debug", "task-1", "debug", True, 0.1),
+            result("t1-improve", "task-1", "improve", True, 0.7),
+            result("t2-debug", "task-2", "debug", True, 0.1),
+            result("t2-improve", "task-2", "improve", True, 0.1),
+        ],
+    )
+
+    accepted = evaluate_operator(
+        case_path=cases,
+        parent_paths=[parent],
+        candidate_paths=[candidate],
+        num_tasks=2,
+        operators=["debug", "improve"],
+        output_dir=tmp_path / "operator",
+    )
+
+    assert accepted["selected_tasks"] == ["task-1", "task-2"]
+    assert accepted["metrics_by_operator"]["debug"]["success_delta"] == 1
+    assert accepted["metrics_by_operator"]["improve"]["success_delta"] == 0
+    assert accepted["total"]["success_delta"] == 1
+    assert accepted["decision"] == "accept"
+
+    rejected = evaluate_operator(
+        case_path=cases,
+        parent_paths=[parent],
+        candidate_paths=[parent],
+        num_tasks=2,
+        operators=["debug", "improve"],
+        output_dir=tmp_path / "operator-tied",
+    )
+    assert rejected["decision"] == "reject"

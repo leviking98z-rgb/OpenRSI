@@ -348,7 +348,37 @@ best normalized score @ fixed execution budget B
 Gym 的统一 normalized score；若某类任务不能可靠归一化，则以 task-level
 win/tie/loss 和任务内 paired delta 为主。
 
-### 5.5 随机性与统计报告
+### 5.5 最小标准 Eval 入口
+
+`OpenMLE-ERL/SFT/scripts/generational/standard_eval.py` 把上述核心检查收敛为
+两个子命令。任务始终按冻结 manifest 的顺序取前 `num_tasks` 个，因此小规模
+smoke 是正式 Eval 的固定子集。
+
+```bash
+# 固定上下文的 Debug / Improve operator gate
+python scripts/generational/standard_eval.py operator \
+  --cases operator-cases.jsonl \
+  --parent g0-operator-results.jsonl \
+  --candidate candidate-operator-results.jsonl \
+  --num-tasks 24 \
+  --operators debug improve \
+  --output-dir outputs/operator
+
+# 复用已经导出的 fixed-budget Evo execution records
+python scripts/generational/standard_eval.py e2e \
+  --parent g0-evo.jsonl \
+  --candidate candidate-evo.jsonl \
+  --task-manifest promotion.jsonl \
+  --num-tasks 24 \
+  --budget 16 \
+  --output-dir outputs/e2e
+```
+
+两种模式都写出统一的 `standard_eval.json`。Operator gate 要求 Debug 和
+Improve 各自成功数不低于 G0，且总成功数严格高于 G0；E2E gate 要求
+`best@budget` 平均值提高、逐题 wins 多于 losses，且 valid rate 不低于 G0。
+
+### 5.6 随机性与统计报告
 
 推荐每个 held-out task 使用 3 个配对 seeds；成本极紧时，优先保留更多 task，而不是
 在极少 task 上堆很多 seeds。
