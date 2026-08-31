@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the standardized operator or end-to-end promotion gate."""
+"""Build a standardized operator or end-to-end comparison report."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ def main() -> None:
     operator.add_argument(
         "--operators", nargs="+", default=["debug", "improve"]
     )
+    operator.add_argument("--cases-per-operator", type=int, default=2)
     operator.add_argument("--output-dir", type=Path, required=True)
 
     e2e = subparsers.add_parser("e2e")
@@ -49,6 +50,7 @@ def main() -> None:
             num_tasks=args.num_tasks,
             operators=args.operators,
             output_dir=args.output_dir,
+            cases_per_operator=args.cases_per_operator,
         )
     else:
         result = evaluate_e2e(

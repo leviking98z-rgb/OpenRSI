@@ -398,69 +398,61 @@ def test_standard_e2e_uses_frozen_task_prefix_and_configurable_budget(
 
     assert result["selected_tasks"] == ["task-b", "task-a"]
     assert result["budget"] == 2
-    assert result["decision"] == "accept"
+    assert result["primary_metric"]["name"] == "mean_normalized_best"
+    assert result["primary_metric"]["candidate"] > result["primary_metric"]["parent"]
+    assert result["primary_metric"]["delta"] > 0
     assert result["comparisons"]["candidate_vs_parent"]["best"]["wins"] == 2
+    assert "decision" not in result
+    assert "gate_checks" not in result
     assert (tmp_path / "e2e/standard_eval.json").is_file()
 
 
-def test_standard_operator_eval_applies_debug_improve_gate(
+def test_standard_operator_eval_reports_balanced_debug_improve_cases(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases.jsonl"
-    write_jsonl(
-        cases,
-        [
-            {
-                "case_id": "t1-debug",
-                "task_name": "task-1",
-                "operator": "debug",
-                "parent_valid": False,
-                "parent_score": None,
-                "higher_is_better": True,
-            },
-            {
-                "case_id": "t1-improve",
-                "task_name": "task-1",
-                "operator": "improve",
-                "parent_valid": True,
-                "parent_score": 0.5,
-                "higher_is_better": True,
-            },
-            {
-                "case_id": "t2-debug",
-                "task_name": "task-2",
-                "operator": "debug",
-                "parent_valid": False,
-                "parent_score": None,
-                "higher_is_better": True,
-            },
-            {
-                "case_id": "t2-improve",
-                "task_name": "task-2",
-                "operator": "improve",
-                "parent_valid": True,
-                "parent_score": 0.2,
-                "higher_is_better": False,
-            },
-            {
-                "case_id": "unused",
-                "task_name": "task-unused",
-                "operator": "debug",
-                "parent_valid": False,
-            },
-        ],
+    case_rows = []
+    for task_number in (1, 2):
+        task_name = f"task-{task_number}"
+        higher_is_better = task_number == 1
+        for operator in ("debug", "improve"):
+            for index in range(2):
+                case_rows.append(
+                    {
+                        "case_id": f"{task_name}-{operator}-{index}",
+                        "task_name": task_name,
+                        "operator": operator,
+                        "parent_valid": operator == "improve",
+                        "parent_score": 0.5 if operator == "improve" else None,
+                        "higher_is_better": higher_is_better,
+                    }
+                )
+    case_rows.append(
+        {
+            "case_id": "unused",
+            "task_name": "task-unused",
+            "operator": "debug",
+            "parent_valid": False,
+        }
     )
+    write_jsonl(cases, case_rows)
 
-    def result(
-        case_id: str,
-        task_name: str,
-        operator: str,
-        valid: bool,
-        score: float | None,
-    ) -> dict[str, Any]:
+    def result(case: dict[str, Any], model: str) -> dict[str, Any]:
+        task_name = str(case["task_name"])
+        operator = str(case["operator"])
+        index = int(str(case["case_id"]).rsplit("-", 1)[1])
+        if operator == "debug":
+            valid = index == 0 or (model == "candidate" and task_name == "task-1")
+            score = 0.1 if valid else None
+        elif case["higher_is_better"]:
+            score = (0.6 if index == 0 else 0.4) if model == "parent" else 0.7
+            valid = True
+        else:
+            score = (0.4 if index == 0 else 0.6) if model == "parent" else 0.3
+            valid = True
         return {
-            "case_id": case_id,
-            "task_name": task_name,
+            "case_id": case["case_id"],
+            "task_name": case["task_name"],
             "operator": operator,
             "valid": valid,
             "score": score,
@@ -468,26 +460,13 @@ def test_standard_operator_eval_applies_debug_improve_gate(
 
     parent = tmp_path / "parent.jsonl"
     candidate = tmp_path / "candidate.jsonl"
+    selected_cases = [row for row in case_rows if row["task_name"] != "task-unused"]
+    write_jsonl(parent, [result(case, "parent") for case in selected_cases])
     write_jsonl(
-        parent,
-        [
-            result("t1-debug", "task-1", "debug", False, None),
-            result("t1-improve", "task-1", "improve", True, 0.6),
-            result("t2-debug", "task-2", "debug", True, 0.1),
-            result("t2-improve", "task-2", "improve", True, 0.15),
-        ],
-    )
-    write_jsonl(
-        candidate,
-        [
-            result("t1-debug", "task-1", "debug", True, 0.1),
-            result("t1-improve", "task-1", "improve", True, 0.7),
-            result("t2-debug", "task-2", "debug", True, 0.1),
-            result("t2-improve", "task-2", "improve", True, 0.1),
-        ],
+        candidate, [result(case, "candidate") for case in selected_cases]
     )
 
-    accepted = evaluate_operator(
+    report = evaluate_operator(
         case_path=cases,
         parent_paths=[parent],
         candidate_paths=[candidate],
@@ -496,18 +475,13 @@ def test_standard_operator_eval_applies_debug_improve_gate(
         output_dir=tmp_path / "operator",
     )
 
-    assert accepted["selected_tasks"] == ["task-1", "task-2"]
-    assert accepted["metrics_by_operator"]["debug"]["success_delta"] == 1
-    assert accepted["metrics_by_operator"]["improve"]["success_delta"] == 0
-    assert accepted["total"]["success_delta"] == 1
-    assert accepted["decision"] == "accept"
-
-    rejected = evaluate_operator(
-        case_path=cases,
-        parent_paths=[parent],
-        candidate_paths=[parent],
-        num_tasks=2,
-        operators=["debug", "improve"],
-        output_dir=tmp_path / "operator-tied",
-    )
-    assert rejected["decision"] == "reject"
+    assert report["selected_tasks"] == ["task-1", "task-2"]
+    assert report["cases_per_operator_per_task"] == 2
+    assert report["metrics_by_operator"]["debug"]["cases"] == 4
+    assert report["metrics_by_operator"]["improve"]["cases"] == 4
+    assert report["metrics_by_operator"]["debug"]["success_delta"] == 1
+    assert report["metrics_by_operator"]["improve"]["success_delta"] == 2
+    assert report["overall"]["cases"] == 8
+    assert report["overall"]["success_rate_delta"] == 3 / 8
+    assert "decision" not in report
+    assert "gate_checks" not in report

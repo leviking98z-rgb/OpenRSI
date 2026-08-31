@@ -1,7 +1,8 @@
-"""Small standardized gates for operator and end-to-end MA1 evaluation."""
+"""Small standardized reports for operator and end-to-end MA1 evaluation."""
 
 from __future__ import annotations
 
+import statistics
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -78,7 +79,7 @@ def evaluate_e2e(
     output_dir: Path,
     bootstrap_samples: int = 10_000,
 ) -> dict[str, Any]:
-    """Compare two already-exported fixed-budget Evo runs on a frozen task prefix."""
+    """Report two already-exported fixed-budget Evo runs on a frozen task prefix."""
 
     task_names = select_task_names(task_manifest, num_tasks)
     parent_rows = _select_e2e_rows(_load(parent_paths), task_names, "parent")
@@ -91,7 +92,7 @@ def evaluate_e2e(
         candidate_path = temp_root / "candidate.jsonl"
         write_jsonl(parent_path, parent_rows)
         write_jsonl(candidate_path, candidate_rows)
-        promotion = evaluate_promotion(
+        analysis = evaluate_promotion(
             parent_paths=[parent_path],
             candidate_paths=[candidate_path],
             output_dir=temp_root / "promotion",
@@ -100,11 +101,33 @@ def evaluate_e2e(
             bootstrap_samples=bootstrap_samples,
         )
 
+    metrics_by_task = analysis["metrics_by_task"]
+    overall_scores = {
+        model: {
+            metric: statistics.fmean(
+                task_metrics[metric] for task_metrics in model_metrics.values()
+            )
+            for metric in ("direct", "best", "auc", "valid_rate")
+        }
+        for model, model_metrics in metrics_by_task.items()
+    }
+    parent_best = overall_scores["parent"]["best"]
+    candidate_best = overall_scores["candidate"]["best"]
     result = {
         "mode": "e2e",
         "num_tasks": num_tasks,
         "selected_tasks": task_names,
-        **promotion,
+        "budget": budget,
+        "primary_metric": {
+            "name": "mean_normalized_best",
+            "parent": parent_best,
+            "candidate": candidate_best,
+            "delta": candidate_best - parent_best,
+        },
+        "overall_scores": overall_scores,
+        "normalization_by_task": analysis["normalization_by_task"],
+        "metrics_by_task": metrics_by_task,
+        "comparisons": analysis["comparisons"],
     }
     write_json(output_dir / "standard_eval.json", result)
     return result
@@ -126,10 +149,13 @@ def _operators(values: list[str]) -> list[str]:
 
 
 def _select_operator_cases(
-    case_path: Path, num_tasks: int, operators: list[str]
+    case_path: Path,
+    num_tasks: int,
+    operators: list[str],
+    cases_per_operator: int,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    if num_tasks <= 0:
-        raise ValueError("num_tasks must be positive")
+    if num_tasks <= 0 or cases_per_operator <= 0:
+        raise ValueError("num_tasks and cases_per_operator must be positive")
     allowed = set(operators)
     rows = [
         row
@@ -155,20 +181,21 @@ def _select_operator_cases(
             f"operator cases contain {len(task_names)} tasks, requested {num_tasks}"
         )
     task_names = task_names[:num_tasks]
-    selected_tasks = set(task_names)
-    selected_rows = [
-        row for row in rows if str(row["task_name"]) in selected_tasks
-    ]
-    present_operators = {
-        str(row.get("operator") or "").lower() for row in selected_rows
-    }
-    missing_operators = [
-        operator for operator in operators if operator not in present_operators
-    ]
-    if missing_operators:
-        raise ValueError(
-            f"selected operator cases are missing operators: {missing_operators}"
-        )
+    selected_rows: list[dict[str, Any]] = []
+    for task_name in task_names:
+        for operator in operators:
+            matching = [
+                row
+                for row in rows
+                if str(row["task_name"]) == task_name
+                and str(row["operator"]).lower() == operator
+            ]
+            if len(matching) < cases_per_operator:
+                raise ValueError(
+                    f"{task_name} has {len(matching)} {operator} cases, "
+                    f"requested {cases_per_operator}"
+                )
+            selected_rows.extend(matching[:cases_per_operator])
     return task_names, selected_rows
 
 
@@ -245,12 +272,13 @@ def evaluate_operator(
     num_tasks: int,
     operators: list[str],
     output_dir: Path,
+    cases_per_operator: int = 2,
 ) -> dict[str, Any]:
-    """Apply the fixed-context Debug/Improve gate to scored model outputs."""
+    """Report fixed-context Debug/Improve success for two models."""
 
     selected_operators = _operators(operators)
     task_names, cases = _select_operator_cases(
-        case_path, num_tasks, selected_operators
+        case_path, num_tasks, selected_operators, cases_per_operator
     )
     case_ids = {str(case["case_id"]) for case in cases}
     parent = _result_index(parent_paths, case_ids, "parent")
@@ -312,30 +340,24 @@ def evaluate_operator(
     candidate_total = sum(
         row["candidate_model"]["success"] for row in comparisons
     )
-    checks = {
-        f"{operator}_success_not_below_parent": (
-            metrics[operator]["candidate_successes"]
-            >= metrics[operator]["parent_successes"]
-        )
-        for operator in selected_operators
-    }
-    checks["total_success_strictly_above_parent"] = (
-        candidate_total > parent_total
-    )
+    total_cases = len(comparisons)
     result = {
         "mode": "operator",
-        "decision": "accept" if all(checks.values()) else "reject",
         "num_tasks": num_tasks,
         "selected_tasks": task_names,
         "operators": selected_operators,
+        "cases_per_operator_per_task": cases_per_operator,
         "metrics_by_operator": metrics,
-        "total": {
-            "cases": len(comparisons),
+        "overall": {
+            "cases": total_cases,
             "parent_successes": parent_total,
             "candidate_successes": candidate_total,
-            "success_delta": candidate_total - parent_total,
+            "parent_success_rate": parent_total / total_cases,
+            "candidate_success_rate": candidate_total / total_cases,
+            "success_rate_delta": (
+                candidate_total / total_cases - parent_total / total_cases
+            ),
         },
-        "gate_checks": checks,
         "cases": comparisons,
     }
     write_json(output_dir / "standard_eval.json", result)

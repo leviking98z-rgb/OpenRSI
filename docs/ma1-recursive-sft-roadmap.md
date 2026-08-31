@@ -66,19 +66,17 @@ G1 + Evo@B > G0 + Evo@B
                  candidate G(t+1)
                          |
                          v
-       held-out promotion evaluation against Gt
-                  /                   \
-              accept                 reject
-                |                       |
-                v                       v
-             G(t+1)                    Gt
+       held-out evaluation against Gt
+                         |
+                         v
+        compare mean normalized best@B
 ```
 
 这里有两种“晋升”：
 
 1. **程序层晋升**：Evo 中更好的 child program 替换 parent program。
-2. **模型层晋升**：由这些成功修改训练出的 candidate checkpoint，通过 held-out
-   验证后替换 parent checkpoint。
+2. **模型层更新**：由这些成功修改训练出的 candidate checkpoint，在 held-out
+   任务上与 parent 比较整体系统分数。
 
 第一阶段只跑一代：
 
@@ -202,21 +200,17 @@ anchor SFT replay + newly distilled Evo experience -> candidate G1
 该比例是起点，不是结论。anchor replay 用于降低遗忘；新经验比例根据 held-out
 operator eval 和 promotion eval 调整。
 
-### 3.4 Promotion gate：决定是否替换父模型
+### 3.4 整体分数比较
 
-candidate 不因训练完成而自动晋升。必须在从未参与搜索数据生成和 SFT 的
-Promotion Set 上，与 parent 使用完全相同的推理和搜索预算进行比较。
-
-最小晋升条件：
+candidate 必须在从未参与搜索数据生成和 SFT 的 Promotion Set 上，与 parent
+使用完全相同的推理和搜索预算进行比较。当前原型不设置多条件严格 Gate，只看：
 
 ```text
-1. fixed-budget Evo 主指标提高；
-2. task-level wins > losses；
-3. 程序有效率和 anchor 能力没有超过预设容差的退化。
+mean normalized best@B(candidate) - mean normalized best@B(parent)
 ```
 
-若不满足，保留 parent，并把失败归因到数据、训练或 operator/search 匹配问题，
-而不是继续无条件滚动到下一代。
+`direct@1`、AUC、win/tie/loss、valid rate 和 Operator Eval 都保留为解释指标，
+但不单独决定结论。
 
 ## 4. 数据隔离
 
@@ -236,15 +230,14 @@ Final Test
 必须按完整 task 划分；如果多个任务共享同一 Kaggle competition、dataset 或高度
 相似的数据源，还应按 competition/dataset family 成组隔离，而不是按数据行随机切分。
 
-建议的核心实验规模：
+当前正式 Eval 规模：
 
 ```text
-Search-Train:  30-50 tasks
-Promotion:      8-10 tasks
-Final Test:    15-20 tasks
+Operator Eval: 24 tasks × (2 Debug + 2 Improve) = 96 cases
+E2E Eval:      24 tasks × Evo16
 ```
 
-在正式核心实验前可以使用更小的 smoke split 检查链路，但不能用 smoke 结果支持性能结论。
+本轮不额外运行 smoke split，直接执行冻结配置下的正式 Eval。
 
 每一代还必须：
 
@@ -351,17 +344,17 @@ win/tie/loss 和任务内 paired delta 为主。
 ### 5.5 最小标准 Eval 入口
 
 `OpenMLE-ERL/SFT/scripts/generational/standard_eval.py` 把上述核心检查收敛为
-两个子命令。任务始终按冻结 manifest 的顺序取前 `num_tasks` 个，因此小规模
-smoke 是正式 Eval 的固定子集。
+两个子命令。任务始终按冻结 manifest 的顺序取前 `num_tasks` 个。
 
 ```bash
-# 固定上下文的 Debug / Improve operator gate
+# 固定上下文的 Debug / Improve 对比
 python scripts/generational/standard_eval.py operator \
   --cases operator-cases.jsonl \
   --parent g0-operator-results.jsonl \
   --candidate candidate-operator-results.jsonl \
   --num-tasks 24 \
   --operators debug improve \
+  --cases-per-operator 2 \
   --output-dir outputs/operator
 
 # 复用已经导出的 fixed-budget Evo execution records
@@ -374,14 +367,15 @@ python scripts/generational/standard_eval.py e2e \
   --output-dir outputs/e2e
 ```
 
-两种模式都写出统一的 `standard_eval.json`。Operator gate 要求 Debug 和
-Improve 各自成功数不低于 G0，且总成功数严格高于 G0；E2E gate 要求
-`best@budget` 平均值提高、逐题 wins 多于 losses，且 valid rate 不低于 G0。
+两种模式都写出统一的 `standard_eval.json`。Operator Eval 共使用 96 个固定
+case，即每个任务 2 个 Debug 和 2 个 Improve；case 相互独立，可以直接跨 GPU
+分片并行。G0 和 Candidate 各运行 96 次，共 192 次生成与执行。Operator 只报告
+总体及分类成功率。E2E 的唯一主结果是两者的平均 normalized `best@16` 及差值。
 
 ### 5.6 随机性与统计报告
 
-推荐每个 held-out task 使用 3 个配对 seeds；成本极紧时，优先保留更多 task，而不是
-在极少 task 上堆很多 seeds。
+当前每个 held-out task 使用一个固定 seed，优先增加任务覆盖面，而不是在少量任务上
+重复多个 seed。
 
 最终至少报告：
 
@@ -394,20 +388,24 @@ score-vs-execution curve
 
 tie 的容差应在看结果前，根据 evaluator 精度预先确定。
 
-### 5.6 核心成功判据
+### 5.7 核心结论
 
 **系统性能证据：**
 
 ```text
-G1 + Evo@B > G0 + Evo@B
+mean normalized best@16(G1) - mean normalized best@16(G0)
 ```
 
-**权重吸收证据：**
+正值表示新增权重更新链路带来了整体提升；零或负值表示本轮没有观察到提升。不再要求
+win/loss、valid rate 或某一类 operator 同时跨过硬阈值。
+
+**机制解释：**
 
 ```text
-G1 direct@1 > G0 direct@1
-and/or
-G1 has higher Improve/Debug success than G0
+Operator overall success-rate delta
+Debug success-rate delta
+Improve success-rate delta
+direct@1 / AUC / valid-rate delta
 ```
 
 不同结果应作不同解释：
@@ -490,19 +488,18 @@ G1 has higher Improve/Debug success than G0
 
 退出条件：训练稳定完成，且基础 anchor eval 无明显灾难性退化。
 
-### Phase 3：运行小核心 Eval
+### Phase 3：运行正式核心 Eval
 
 按顺序运行：
 
 ```text
-direct@1
--> fixed-state operator eval
--> fixed-budget Evo@B on Promotion
--> promotion decision
--> one-shot Final Test
+fixed-state Operator Eval: 24 tasks, 96 cases
+-> fixed-budget E2E Eval: 24 tasks × Evo16
+-> compare mean normalized best@16
 ```
 
-退出条件：G1 在 Final Test 的 Evo@B 主指标优于 G0。
+`direct@1` 和 AUC 从同一次 E2E execution records 中计算，不再单独重复运行。
+退出条件：得到完整的 G0/G1 对比报告；整体分数差是唯一主结论。
 
 ### Phase 4：消融与效率优化
 
