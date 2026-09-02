@@ -1,0 +1,64 @@
+{
+ "total": 5567,
+ "by_state": {
+  "materialized": 1892,
+  "deferred_large": 54,
+  "pending": 1932,
+  "ready": 1677,
+  "blocked": 8,
+  "blocked_needs_rules": 4
+ },
+ "by_source_list": {
+  "kaggle_datasets": 3301,
+  "kaggle_competitions": 2221,
+  "curated_anchors": 45
+ },
+ "by_acquisition": {
+  "kaggle_dataset": 1892,
+  "hf_package": 1385,
+  "kaggle_competition": 2282,
+  "direct_archive": 6,
+  "aicrowd_challenge": 1,
+  "sklearn_dataset": 1
+ },
+ "by_task": {
+  "(unrecognized)": 2259,
+  "classification": 1716,
+  "regression": 1360,
+  "object-detection": 75,
+  "generation": 75,
+  "segmentation": 49,
+  "classification,regression": 10,
+  "prediction": 4,
+  "segmentation,classification": 3,
+  "classification,segmentation": 2,
+  "segmentation,object-detection": 2,
+  "regression,classification": 2
+ },
+ "by_modality": {
+  "(none)": 2247,
+  "tabular": 1175,
+  "time-series": 597,
+  "image": 509,
+  "tabular,text": 409,
+  "text": 334,
+  "tabular,time-series": 142,
+  "audio": 46,
+  "video": 24,
+  "audio,image,tabular,text,time-series,video": 16,
+  "image,tabular": 13,
+  "image,text": 13
+ },
+ "size_declared_vs_measured_note": "declared sizes are mostly accurate (median ratio 0.9x over 11 comparable); a few are wildly off, so a measured value always wins and the downloader still enforces a cap",
+ "dirty_task_annotations": 2282,
+ "dirty_modality_annotations": 2262,
+ "missing_higher_is_better": 0,
+ "size_known": 5377,
+ "size_measured": 2251,
+ "size_declared": 2104,
+ "size_unknown": 190,
+ "size_total_gb": 2850.2,
+ "deferred_large_gb": 1188.9,
+ "eval_leak_count": 0,
+ "defer_threshold_gb": 10.0
+}
